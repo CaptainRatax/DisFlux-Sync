@@ -4,21 +4,29 @@
 // See the LICENSE file for details.
 
 import { ChannelType, PermissionsBitField } from "discord.js";
+import {
+	sanitizeMongoObjectId,
+	sanitizePlatformId,
+} from "../utils/sanitize.js";
 function normalizeId(value) {
-	const normalized = String(value ?? "").trim();
-	if (!normalized) {
+	if (typeof value !== "string" && typeof value !== "number") {
 		return null;
 	}
+
+	const normalized = String(value).trim();
 	if (["auto", "null", "none", "-"].includes(normalized.toLowerCase())) {
 		return null;
 	}
-	return normalized;
+
+	return sanitizePlatformId(normalized);
 }
 function normalizeRequiredId(value) {
-	const normalized = String(value ?? "").trim();
-	return normalized || null;
+	return sanitizePlatformId(value);
 }
 function normalizePriority(value) {
+	return normalizePlatform(value);
+}
+function normalizePlatform(value) {
 	const normalized = String(value ?? "")
 		.trim()
 		.toLowerCase();
@@ -48,6 +56,42 @@ function getGuildFieldName(platform) {
 	}
 	throw new Error(`Unsupported platform: ${platform}`);
 }
+function getChannelFieldName(platform) {
+	if (platform === "discord") {
+		return "discordChannelId";
+	}
+	if (platform === "fluxer") {
+		return "fluxerChannelId";
+	}
+	throw new Error(`Unsupported platform: ${platform}`);
+}
+function getRoleFieldName(platform) {
+	if (platform === "discord") {
+		return "discordRoleId";
+	}
+	if (platform === "fluxer") {
+		return "fluxerRoleId";
+	}
+	throw new Error(`Unsupported platform: ${platform}`);
+}
+function getUserFieldName(platform) {
+	if (platform === "discord") {
+		return "discordUserId";
+	}
+	if (platform === "fluxer") {
+		return "fluxerUserId";
+	}
+	throw new Error(`Unsupported platform: ${platform}`);
+}
+function formatPlatformLabel(platform) {
+	if (platform === "discord") {
+		return "Discord";
+	}
+	if (platform === "fluxer") {
+		return "Fluxer";
+	}
+	return "Unknown";
+}
 function formatChannelTypeLabel(kind) {
 	if (kind === "text") {
 		return "text";
@@ -66,6 +110,7 @@ export class LinkService {
 		this.channelLinks = mongo.collection("channel_links");
 		this.roleLinks = mongo.collection("role_links");
 		this.userLinks = mongo.collection("user_links");
+		this.messageLinks = mongo.collection("message_links");
 		this.platforms = platforms;
 		this.botPrefix = botPrefix;
 		this.syncService = syncService;
@@ -163,7 +208,7 @@ export class LinkService {
 			}
 			const mappedParentId = template.parentId
 				? await this.findLinkedChannelId(
-						base.serverLink._id,
+						base.serverLinkId,
 						"discord",
 						template.parentId,
 						"fluxer",
@@ -180,7 +225,13 @@ export class LinkService {
 				);
 				return;
 			}
-			fluxerChannelId = created.id;
+			fluxerChannelId = normalizeRequiredId(created.id);
+			if (!fluxerChannelId) {
+				await context.reply(
+					"Fluxer returned an invalid ID for the created channel.",
+				);
+				return;
+			}
 			fluxerChannel = created;
 		}
 		if (!discordChannelId) {
@@ -197,7 +248,7 @@ export class LinkService {
 			}
 			const mappedParentId = template.parentId
 				? await this.findLinkedChannelId(
-						base.serverLink._id,
+						base.serverLinkId,
 						"fluxer",
 						template.parentId,
 						"discord",
@@ -214,16 +265,22 @@ export class LinkService {
 				);
 				return;
 			}
-			discordChannelId = created.id;
+			discordChannelId = normalizeRequiredId(created.id);
+			if (!discordChannelId) {
+				await context.reply(
+					"Discord returned an invalid ID for the created channel.",
+				);
+				return;
+			}
 			discordChannel = created;
 		}
 		const existingDiscordSide = await this.channelLinks.findOne({
-			serverLinkId: base.serverLink._id,
-			discordChannelId,
+			serverLinkId: { $eq: base.serverLinkId },
+			discordChannelId: { $eq: discordChannelId },
 		});
 		const existingFluxerSide = await this.channelLinks.findOne({
-			serverLinkId: base.serverLink._id,
-			fluxerChannelId,
+			serverLinkId: { $eq: base.serverLinkId },
+			fluxerChannelId: { $eq: fluxerChannelId },
 		});
 		if (
 			existingDiscordSide &&
@@ -263,7 +320,7 @@ export class LinkService {
 			return;
 		}
 		await this.channelLinks.insertOne({
-			serverLinkId: base.serverLink._id,
+			serverLinkId: base.serverLinkId,
 			discordChannelId,
 			fluxerChannelId,
 			priority,
@@ -333,8 +390,8 @@ export class LinkService {
 				return;
 			}
 			const existing = await this.roleLinks.findOne({
-				serverLinkId: base.serverLink._id,
-				discordRoleId,
+				serverLinkId: { $eq: base.serverLinkId },
+				discordRoleId: { $eq: discordRoleId },
 			});
 			if (existing) {
 				await context.reply("That Discord role is already linked.");
@@ -363,8 +420,8 @@ export class LinkService {
 				return;
 			}
 			const existing = await this.roleLinks.findOne({
-				serverLinkId: base.serverLink._id,
-				fluxerRoleId,
+				serverLinkId: { $eq: base.serverLinkId },
+				fluxerRoleId: { $eq: fluxerRoleId },
 			});
 			if (existing) {
 				await context.reply("That Fluxer role is already linked.");
@@ -393,7 +450,13 @@ export class LinkService {
 				);
 				return;
 			}
-			fluxerRoleId = created.id;
+			fluxerRoleId = normalizeRequiredId(created.id);
+			if (!fluxerRoleId) {
+				await context.reply(
+					"Fluxer returned an invalid ID for the created role.",
+				);
+				return;
+			}
 		}
 		if (!discordRoleId) {
 			const template = await this.platforms.fluxer.getGuildRoleTemplate(
@@ -417,27 +480,29 @@ export class LinkService {
 				);
 				return;
 			}
-			discordRoleId = created.id;
+			discordRoleId = normalizeRequiredId(created.id);
+			if (!discordRoleId) {
+				await context.reply(
+					"Discord returned an invalid ID for the created role.",
+				);
+				return;
+			}
 		}
-		const result = await this.roleLinks.insertOne({
-			serverLinkId: base.serverLink._id,
+		const roleLink = {
+			serverLinkId: base.serverLinkId,
 			discordRoleId,
 			fluxerRoleId,
 			priority,
 			createdAt: new Date(),
-		});
+		};
+		const result = await this.roleLinks.insertOne(roleLink);
+		roleLink._id = result.insertedId;
 
 		if (this.syncService) {
-			const roleLink = await this.roleLinks.findOne({
-				_id: result.insertedId,
-			});
-
-			if (roleLink) {
-				await this.syncService.syncLinkedRoleAcrossUsers(
-					base.serverLink,
-					roleLink,
-				);
-			}
+			await this.syncService.syncLinkedRoleAcrossUsers(
+				base.serverLink,
+				roleLink,
+			);
 		}
 
 		await context.reply(
@@ -490,37 +555,33 @@ export class LinkService {
 			return;
 		}
 		const existingDiscordSide = await this.userLinks.findOne({
-			serverLinkId: base.serverLink._id,
-			discordUserId,
+			serverLinkId: { $eq: base.serverLinkId },
+			discordUserId: { $eq: discordUserId },
 		});
 		if (existingDiscordSide) {
 			await context.reply("That Discord user is already linked.");
 			return;
 		}
 		const existingFluxerSide = await this.userLinks.findOne({
-			serverLinkId: base.serverLink._id,
-			fluxerUserId,
+			serverLinkId: { $eq: base.serverLinkId },
+			fluxerUserId: { $eq: fluxerUserId },
 		});
 		if (existingFluxerSide) {
 			await context.reply("That Fluxer user is already linked.");
 			return;
 		}
-		const result = await this.userLinks.insertOne({
-			serverLinkId: base.serverLink._id,
+		const userLink = {
+			serverLinkId: base.serverLinkId,
 			discordUserId,
 			fluxerUserId,
 			priority,
 			createdAt: new Date(),
-		});
+		};
+		const result = await this.userLinks.insertOne(userLink);
+		userLink._id = result.insertedId;
 
 		if (this.syncService) {
-			const userLink = await this.userLinks.findOne({
-				_id: result.insertedId,
-			});
-
-			if (userLink) {
-				await this.syncService.syncLinkedUser(base.serverLink, userLink);
-			}
+			await this.syncService.syncLinkedUser(base.serverLink, userLink);
 		}
 
 		await context.reply(
@@ -529,6 +590,127 @@ export class LinkService {
 				`Priority: \`${priority}\``,
 				`Discord user ID: \`${discordUserId}\``,
 				`Fluxer user ID: \`${fluxerUserId}\``,
+			].join("\n"),
+		);
+	}
+	async handleUnlinkChannel(context, platformRaw, channelRaw) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		const platform = normalizePlatform(platformRaw);
+		const channelId = normalizeId(channelRaw);
+		if (!platform || !channelId) {
+			await context.reply(
+				`Usage: ${this.botPrefix}unlink-channel <discord|fluxer> <channel-id>`,
+			);
+			return;
+		}
+		const fieldName = getChannelFieldName(platform);
+		const link = await this.channelLinks.findOne({
+			serverLinkId: { $eq: base.serverLinkId },
+			[fieldName]: { $eq: channelId },
+		});
+		if (!link) {
+			await context.reply(
+				`No channel link found for that ${formatPlatformLabel(platform)} channel.`,
+			);
+			return;
+		}
+		await this.channelLinks.deleteOne({ _id: link._id });
+		const linkedDiscordChannelId = normalizeRequiredId(
+			link.discordChannelId,
+		);
+		const linkedFluxerChannelId = normalizeRequiredId(
+			link.fluxerChannelId,
+		);
+		const messageLinkFilters = [
+			linkedDiscordChannelId
+				? { discordChannelId: { $eq: linkedDiscordChannelId } }
+				: null,
+			linkedFluxerChannelId
+				? { fluxerChannelId: { $eq: linkedFluxerChannelId } }
+				: null,
+		].filter(Boolean);
+		const removedMessageLinks =
+			messageLinkFilters.length > 0
+				? await this.messageLinks.deleteMany({
+						serverLinkId: base.serverLinkId,
+						$or: messageLinkFilters,
+					})
+				: { deletedCount: 0 };
+		await context.reply(
+			[
+				"Channel link removed successfully.",
+				`Discord channel ID: \`${link.discordChannelId}\``,
+				`Fluxer channel ID: \`${link.fluxerChannelId}\``,
+				`Cached message mappings removed: \`${removedMessageLinks.deletedCount ?? 0}\``,
+			].join("\n"),
+		);
+	}
+	async handleUnlinkRole(context, platformRaw, roleRaw) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		const platform = normalizePlatform(platformRaw);
+		const roleId = normalizeId(roleRaw);
+		if (!platform || !roleId) {
+			await context.reply(
+				`Usage: ${this.botPrefix}unlink-role <discord|fluxer> <role-id>`,
+			);
+			return;
+		}
+		const fieldName = getRoleFieldName(platform);
+		const link = await this.roleLinks.findOne({
+			serverLinkId: { $eq: base.serverLinkId },
+			[fieldName]: { $eq: roleId },
+		});
+		if (!link) {
+			await context.reply(
+				`No role link found for that ${formatPlatformLabel(platform)} role.`,
+			);
+			return;
+		}
+		await this.roleLinks.deleteOne({ _id: link._id });
+		await context.reply(
+			[
+				"Role link removed successfully.",
+				`Discord role ID: \`${link.discordRoleId}\``,
+				`Fluxer role ID: \`${link.fluxerRoleId}\``,
+			].join("\n"),
+		);
+	}
+	async handleUnlinkUser(context, platformRaw, userRaw) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		const platform = normalizePlatform(platformRaw);
+		const userId = normalizeId(userRaw);
+		if (!platform || !userId) {
+			await context.reply(
+				`Usage: ${this.botPrefix}unlink-user <discord|fluxer> <user-id>`,
+			);
+			return;
+		}
+		const fieldName = getUserFieldName(platform);
+		const link = await this.userLinks.findOne({
+			serverLinkId: { $eq: base.serverLinkId },
+			[fieldName]: { $eq: userId },
+		});
+		if (!link) {
+			await context.reply(
+				`No user link found for that ${formatPlatformLabel(platform)} user.`,
+			);
+			return;
+		}
+		await this.userLinks.deleteOne({ _id: link._id });
+		await context.reply(
+			[
+				"User link removed successfully.",
+				`Discord user ID: \`${link.discordUserId}\``,
+				`Fluxer user ID: \`${link.fluxerUserId}\``,
 			].join("\n"),
 		);
 	}
@@ -549,6 +731,12 @@ export class LinkService {
 			);
 			return null;
 		}
+		const serverLinkId = sanitizeMongoObjectId(serverLink._id);
+		if (!serverLinkId) {
+			await context.reply("The saved server link is invalid.");
+			return null;
+		}
+		serverLink._id = serverLinkId;
 		const userIsAdmin = await this.platforms[
 			context.platform
 		].userHasAdministrator(context.guildId, context.userId);
@@ -567,11 +755,17 @@ export class LinkService {
 			);
 			return null;
 		}
-		return { serverLink };
+		return { serverLink, serverLinkId };
 	}
 	async getServerLinkForContext(platform, guildId) {
 		const fieldName = getGuildFieldName(platform);
-		return this.serverLinks.findOne({ [fieldName]: guildId });
+		const sanitizedGuildId = normalizeRequiredId(guildId);
+		if (!sanitizedGuildId) {
+			return null;
+		}
+		return this.serverLinks.findOne({
+			[fieldName]: { $eq: sanitizedGuildId },
+		});
 	}
 	async findLinkedChannelId(
 		serverLinkId,
@@ -580,6 +774,11 @@ export class LinkService {
 		targetPlatform,
 	) {
 		if (!sourceChannelId) {
+			return null;
+		}
+		const sanitizedServerLinkId = sanitizeMongoObjectId(serverLinkId);
+		const sanitizedSourceChannelId = normalizeRequiredId(sourceChannelId);
+		if (!sanitizedServerLinkId || !sanitizedSourceChannelId) {
 			return null;
 		}
 		const sourceField =
@@ -591,8 +790,8 @@ export class LinkService {
 				? "discordChannelId"
 				: "fluxerChannelId";
 		const link = await this.channelLinks.findOne({
-			serverLinkId,
-			[sourceField]: sourceChannelId,
+			serverLinkId: { $eq: sanitizedServerLinkId },
+			[sourceField]: { $eq: sanitizedSourceChannelId },
 		});
 		return link?.[targetField] ?? null;
 	}

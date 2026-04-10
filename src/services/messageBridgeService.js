@@ -4,6 +4,11 @@
 // See the LICENSE file for details.
 
 import { logger } from "../core/logger.js";
+import {
+	sanitizeMongoObjectId,
+	sanitizePlatformId,
+} from "../utils/sanitize.js";
+
 function getOppositePlatform(platform) {
 	if (platform === "discord") {
 		return "fluxer";
@@ -233,7 +238,9 @@ export class MessageBridgeService {
 	}
 	async handleIncomingMessageCreate(event) {
 		try {
-			if (!event.guildId || !event.channelId || !event.messageId) {
+			const sourceChannelId = sanitizePlatformId(event.channelId);
+			const sourceMessageId = sanitizePlatformId(event.messageId);
+			if (!event.guildId || !sourceChannelId || !sourceMessageId) {
 				return;
 			}
 			if (event.isSelfMessage) {
@@ -246,7 +253,7 @@ export class MessageBridgeService {
 					? "discordChannelId"
 					: "fluxerChannelId";
 			const channelLink = await this.channelLinks.findOne({
-				[sourceChannelField]: event.channelId,
+				[sourceChannelField]: { $eq: sourceChannelId },
 			});
 			if (!channelLink) {
 				return;
@@ -261,8 +268,14 @@ export class MessageBridgeService {
 			) {
 				return;
 			}
+			const serverLinkId = sanitizeMongoObjectId(
+				channelLink.serverLinkId,
+			);
+			if (!serverLinkId) {
+				return;
+			}
 			const serverLink = await this.serverLinks.findOne({
-				_id: channelLink.serverLinkId,
+				_id: { $eq: serverLinkId },
 			});
 			if (!serverLink) {
 				return;
@@ -305,9 +318,9 @@ export class MessageBridgeService {
 				logger.warn("Failed to mirror message", {
 					sourcePlatform,
 					targetPlatform,
-					sourceChannelId: event.channelId,
+					sourceChannelId,
 					targetChannelId,
-					sourceMessageId: event.messageId,
+					sourceMessageId,
 				});
 				return;
 			}
@@ -316,7 +329,7 @@ export class MessageBridgeService {
 				discordChannelId: channelLink.discordChannelId,
 				fluxerChannelId: channelLink.fluxerChannelId,
 				sourcePlatform,
-				sourceMessageId: event.messageId,
+				sourceMessageId,
 				targetMessageId: sentMessage.id,
 			});
 		} catch (error) {
@@ -346,8 +359,14 @@ export class MessageBridgeService {
 			) {
 				return;
 			}
+			const serverLinkId = sanitizeMongoObjectId(
+				messageLink.serverLinkId,
+			);
+			if (!serverLinkId) {
+				return;
+			}
 			const serverLink = await this.serverLinks.findOne({
-				_id: messageLink.serverLinkId,
+				_id: { $eq: serverLinkId },
 			});
 			if (!serverLink) {
 				return;
@@ -801,7 +820,10 @@ export class MessageBridgeService {
 		return result;
 	}
 	async resolveReplyReference(serverLinkId, sourcePlatform, sourceMessageId) {
-		if (!sourceMessageId) {
+		const sanitizedServerLinkId = sanitizeMongoObjectId(serverLinkId);
+		const sanitizedSourceMessageId =
+			sanitizePlatformId(sourceMessageId);
+		if (!sanitizedServerLinkId || !sanitizedSourceMessageId) {
 			return null;
 		}
 		const sourceField =
@@ -809,14 +831,20 @@ export class MessageBridgeService {
 				? "discordMessageId"
 				: "fluxerMessageId";
 		return this.messageLinks.findOne({
-			serverLinkId,
-			[sourceField]: sourceMessageId,
+			serverLinkId: { $eq: sanitizedServerLinkId },
+			[sourceField]: { $eq: sanitizedSourceMessageId },
 		});
 	}
 	async findMessageLink(platform, messageId) {
+		const sanitizedMessageId = sanitizePlatformId(messageId);
+		if (!sanitizedMessageId) {
+			return null;
+		}
 		const fieldName =
 			platform === "discord" ? "discordMessageId" : "fluxerMessageId";
-		return this.messageLinks.findOne({ [fieldName]: messageId });
+		return this.messageLinks.findOne({
+			[fieldName]: { $eq: sanitizedMessageId },
+		});
 	}
 	async storeMessageLink({
 		serverLinkId,
@@ -826,19 +854,43 @@ export class MessageBridgeService {
 		sourceMessageId,
 		targetMessageId,
 	}) {
+		const sanitizedServerLinkId = sanitizeMongoObjectId(serverLinkId);
+		const sanitizedDiscordChannelId =
+			sanitizePlatformId(discordChannelId);
+		const sanitizedFluxerChannelId = sanitizePlatformId(fluxerChannelId);
+		const sanitizedSourceMessageId =
+			sanitizePlatformId(sourceMessageId);
+		const sanitizedTargetMessageId =
+			sanitizePlatformId(targetMessageId);
+		if (
+			!sanitizedServerLinkId ||
+			!sanitizedDiscordChannelId ||
+			!sanitizedFluxerChannelId ||
+			!sanitizedSourceMessageId ||
+			!sanitizedTargetMessageId ||
+			(sourcePlatform !== "discord" && sourcePlatform !== "fluxer")
+		) {
+			logger.warn("Skipped storing unsafe message link", {
+				serverLinkId: String(serverLinkId),
+				sourcePlatform,
+				sourceMessageId,
+				targetMessageId,
+			});
+			return;
+		}
 		const document = {
-			serverLinkId,
-			discordChannelId,
-			fluxerChannelId,
+			serverLinkId: sanitizedServerLinkId,
+			discordChannelId: sanitizedDiscordChannelId,
+			fluxerChannelId: sanitizedFluxerChannelId,
 			sourcePlatform,
 			createdAt: new Date(),
 		};
 		if (sourcePlatform === "discord") {
-			document.discordMessageId = sourceMessageId;
-			document.fluxerMessageId = targetMessageId;
+			document.discordMessageId = sanitizedSourceMessageId;
+			document.fluxerMessageId = sanitizedTargetMessageId;
 		} else {
-			document.fluxerMessageId = sourceMessageId;
-			document.discordMessageId = targetMessageId;
+			document.fluxerMessageId = sanitizedSourceMessageId;
+			document.discordMessageId = sanitizedTargetMessageId;
 		}
 		try {
 			await this.messageLinks.insertOne(document);

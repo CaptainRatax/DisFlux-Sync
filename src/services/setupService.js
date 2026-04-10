@@ -5,9 +5,12 @@
 
 import {
 	generateSetupCode,
-	normalizeSetupCode,
 	formatSetupCode,
 } from "../utils/setupCode.js";
+import {
+	sanitizePlatformId,
+	sanitizeSetupCode,
+} from "../utils/sanitize.js";
 
 function getGuildFieldName(platform) {
 	if (platform === "discord") {
@@ -57,9 +60,11 @@ export class SetupService {
 			return;
 		}
 
-		const normalizedTargetGuildId = String(targetGuildId ?? "").trim();
+		const normalizedTargetGuildId = sanitizePlatformId(targetGuildId);
+		const sourceGuildId = sanitizePlatformId(context.guildId);
+		const sourceUserId = sanitizePlatformId(context.userId);
 
-		if (!normalizedTargetGuildId) {
+		if (!normalizedTargetGuildId || !sourceGuildId || !sourceUserId) {
 			await context.reply(
 				`Usage: ${this.botPrefix}setup <target-guild-id>`,
 			);
@@ -68,14 +73,13 @@ export class SetupService {
 
 		const sourcePlatform = context.platform;
 		const targetPlatform = getOtherPlatform(sourcePlatform);
-		const sourceGuildId = context.guildId;
 
 		const sourceClient = this.platforms[sourcePlatform];
 		const targetClient = this.platforms[targetPlatform];
 
 		const userIsAdmin = await sourceClient.userHasAdministrator(
 			sourceGuildId,
-			context.userId,
+			sourceUserId,
 		);
 		if (!userIsAdmin) {
 			await context.reply(
@@ -126,10 +130,10 @@ export class SetupService {
 		}
 
 		await this.pendingSetups.deleteMany({
-			sourcePlatform,
-			sourceGuildId,
-			targetPlatform,
-			targetGuildId: normalizedTargetGuildId,
+			sourcePlatform: { $eq: sourcePlatform },
+			sourceGuildId: { $eq: sourceGuildId },
+			targetPlatform: { $eq: targetPlatform },
+			targetGuildId: { $eq: normalizedTargetGuildId },
 		});
 
 		const code = await this.createUniqueCode();
@@ -144,7 +148,7 @@ export class SetupService {
 			sourceGuildId,
 			targetPlatform,
 			targetGuildId: normalizedTargetGuildId,
-			sourceRequestedByUserId: context.userId,
+			sourceRequestedByUserId: sourceUserId,
 			createdAt: now,
 			expiresAt,
 		});
@@ -167,14 +171,16 @@ export class SetupService {
 			return;
 		}
 
-		const code = normalizeSetupCode(codeInput);
+		const code = sanitizeSetupCode(codeInput, this.setupCodeLength);
 
 		if (!code) {
 			await context.reply(`Usage: ${this.botPrefix}finish-setup <code>`);
 			return;
 		}
 
-		const pending = await this.pendingSetups.findOne({ code });
+		const pending = await this.pendingSetups.findOne({
+			code: { $eq: code },
+		});
 
 		if (!pending) {
 			await context.reply("That setup code is invalid or has expired.");
@@ -188,7 +194,15 @@ export class SetupService {
 			return;
 		}
 
-		if (context.guildId !== pending.targetGuildId) {
+		const currentGuildId = sanitizePlatformId(context.guildId);
+		const currentUserId = sanitizePlatformId(context.userId);
+
+		if (!currentGuildId || !currentUserId) {
+			await context.reply("That setup code is invalid or has expired.");
+			return;
+		}
+
+		if (currentGuildId !== pending.targetGuildId) {
 			await context.reply(
 				"This setup code is not meant for this server.",
 			);
@@ -199,8 +213,8 @@ export class SetupService {
 		const sourceClient = this.platforms[pending.sourcePlatform];
 
 		const currentUserIsAdmin = await currentClient.userHasAdministrator(
-			context.guildId,
-			context.userId,
+			currentGuildId,
+			currentUserId,
 		);
 		if (!currentUserIsAdmin) {
 			await context.reply(
@@ -210,7 +224,7 @@ export class SetupService {
 		}
 
 		const currentBotIsAdmin = await currentClient.botHasAdministrator(
-			context.guildId,
+			currentGuildId,
 		);
 		if (!currentBotIsAdmin) {
 			await context.reply(
@@ -274,9 +288,19 @@ export class SetupService {
 				? pending.sourceGuildId
 				: pending.targetGuildId;
 
+		const sanitizedDiscordGuildId = sanitizePlatformId(discordGuildId);
+		const sanitizedFluxerGuildId = sanitizePlatformId(fluxerGuildId);
+		if (!sanitizedDiscordGuildId || !sanitizedFluxerGuildId) {
+			await this.pendingSetups.deleteOne({ _id: pending._id });
+			await context.reply(
+				"The setup code contains invalid server IDs and was discarded.",
+			);
+			return;
+		}
+
 		await this.serverLinks.insertOne({
-			discordGuildId,
-			fluxerGuildId,
+			discordGuildId: sanitizedDiscordGuildId,
+			fluxerGuildId: sanitizedFluxerGuildId,
 			createdAt: new Date(),
 		});
 
@@ -285,8 +309,8 @@ export class SetupService {
 		await context.reply(
 			[
 				"Setup completed successfully.",
-				`Discord server ID: \`${discordGuildId}\``,
-				`Fluxer server ID: \`${fluxerGuildId}\``,
+				`Discord server ID: \`${sanitizedDiscordGuildId}\``,
+				`Fluxer server ID: \`${sanitizedFluxerGuildId}\``,
 				"You can now move on to channel, role, and user link commands.",
 			].join("\n"),
 		);
@@ -294,13 +318,27 @@ export class SetupService {
 
 	async findServerLinkForGuild(platform, guildId) {
 		const fieldName = getGuildFieldName(platform);
-		return this.serverLinks.findOne({ [fieldName]: guildId });
+		const sanitizedGuildId = sanitizePlatformId(guildId);
+		if (!sanitizedGuildId) {
+			return null;
+		}
+		return this.serverLinks.findOne({
+			[fieldName]: { $eq: sanitizedGuildId },
+		});
 	}
 
 	async createUniqueCode() {
 		for (let attempt = 0; attempt < 10; attempt += 1) {
-			const code = generateSetupCode(this.setupCodeLength);
-			const existing = await this.pendingSetups.findOne({ code });
+			const code = sanitizeSetupCode(
+				generateSetupCode(this.setupCodeLength),
+				this.setupCodeLength,
+			);
+			if (!code) {
+				continue;
+			}
+			const existing = await this.pendingSetups.findOne({
+				code: { $eq: code },
+			});
 
 			if (!existing) {
 				return code;

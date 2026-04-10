@@ -233,6 +233,22 @@ Example:
 !link-user discord 123456789012345678 987654321098765432
 ```
 
+### 5. Unlink channels, roles, or users
+
+```text
+!unlink-channel <discord|fluxer> <channel-id>
+!unlink-role <discord|fluxer> <role-id>
+!unlink-user <discord|fluxer> <user-id>
+```
+
+Examples:
+
+```text
+!unlink-channel discord 123456789012345678
+!unlink-role fluxer 987654321098765432
+!unlink-user discord 123456789012345678
+```
+
 ## Available Commands
 
 ### `!help`
@@ -258,6 +274,18 @@ Creates a role link. One side can be created automatically.
 ### `!link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`
 
 Creates a user link.
+
+### `!unlink-channel <discord|fluxer> <channel-id>`
+
+Removes a channel link and clears cached message mappings for that channel pair.
+
+### `!unlink-role <discord|fluxer> <role-id>`
+
+Removes a role link.
+
+### `!unlink-user <discord|fluxer> <user-id>`
+
+Removes a user link.
 
 ### `!list-channels [page]`
 
