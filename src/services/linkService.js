@@ -61,13 +61,14 @@ function formatChannelTypeLabel(kind) {
 	return "unknown";
 }
 export class LinkService {
-	constructor({ mongo, platforms, botPrefix }) {
+	constructor({ mongo, platforms, botPrefix, syncService = null }) {
 		this.serverLinks = mongo.collection("server_links");
 		this.channelLinks = mongo.collection("channel_links");
 		this.roleLinks = mongo.collection("role_links");
 		this.userLinks = mongo.collection("user_links");
 		this.platforms = platforms;
 		this.botPrefix = botPrefix;
+		this.syncService = syncService;
 	}
 	async handleLinkChannel(
 		context,
@@ -418,13 +419,27 @@ export class LinkService {
 			}
 			discordRoleId = created.id;
 		}
-		await this.roleLinks.insertOne({
+		const result = await this.roleLinks.insertOne({
 			serverLinkId: base.serverLink._id,
 			discordRoleId,
 			fluxerRoleId,
 			priority,
 			createdAt: new Date(),
 		});
+
+		if (this.syncService) {
+			const roleLink = await this.roleLinks.findOne({
+				_id: result.insertedId,
+			});
+
+			if (roleLink) {
+				await this.syncService.syncLinkedRoleAcrossUsers(
+					base.serverLink,
+					roleLink,
+				);
+			}
+		}
+
 		await context.reply(
 			[
 				"Role link created successfully.",
@@ -490,13 +505,24 @@ export class LinkService {
 			await context.reply("That Fluxer user is already linked.");
 			return;
 		}
-		await this.userLinks.insertOne({
+		const result = await this.userLinks.insertOne({
 			serverLinkId: base.serverLink._id,
 			discordUserId,
 			fluxerUserId,
 			priority,
 			createdAt: new Date(),
 		});
+
+		if (this.syncService) {
+			const userLink = await this.userLinks.findOne({
+				_id: result.insertedId,
+			});
+
+			if (userLink) {
+				await this.syncService.syncLinkedUser(base.serverLink, userLink);
+			}
+		}
+
 		await context.reply(
 			[
 				"User link created successfully.",

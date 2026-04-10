@@ -58,15 +58,16 @@ export class App {
 			botPrefix: env.botPrefix,
 		});
 
+		this.syncService = new SyncService({
+			mongo: this.mongo,
+			platforms: this.platforms,
+		});
+
 		this.linkService = new LinkService({
 			mongo: this.mongo,
 			platforms: this.platforms,
 			botPrefix: env.botPrefix,
-		});
-
-		this.syncService = new SyncService({
-			mongo: this.mongo,
-			platforms: this.platforms,
+			syncService: this.syncService,
 		});
 
 		this.messageBridgeService = new MessageBridgeService({
