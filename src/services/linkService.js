@@ -19,6 +19,9 @@ function normalizeRequiredId(value) {
 	return normalized || null;
 }
 function normalizePriority(value) {
+	return normalizePlatform(value);
+}
+function normalizePlatform(value) {
 	const normalized = String(value ?? "")
 		.trim()
 		.toLowerCase();
@@ -48,6 +51,42 @@ function getGuildFieldName(platform) {
 	}
 	throw new Error(`Unsupported platform: ${platform}`);
 }
+function getChannelFieldName(platform) {
+	if (platform === "discord") {
+		return "discordChannelId";
+	}
+	if (platform === "fluxer") {
+		return "fluxerChannelId";
+	}
+	throw new Error(`Unsupported platform: ${platform}`);
+}
+function getRoleFieldName(platform) {
+	if (platform === "discord") {
+		return "discordRoleId";
+	}
+	if (platform === "fluxer") {
+		return "fluxerRoleId";
+	}
+	throw new Error(`Unsupported platform: ${platform}`);
+}
+function getUserFieldName(platform) {
+	if (platform === "discord") {
+		return "discordUserId";
+	}
+	if (platform === "fluxer") {
+		return "fluxerUserId";
+	}
+	throw new Error(`Unsupported platform: ${platform}`);
+}
+function formatPlatformLabel(platform) {
+	if (platform === "discord") {
+		return "Discord";
+	}
+	if (platform === "fluxer") {
+		return "Fluxer";
+	}
+	return "Unknown";
+}
 function formatChannelTypeLabel(kind) {
 	if (kind === "text") {
 		return "text";
@@ -66,6 +105,7 @@ export class LinkService {
 		this.channelLinks = mongo.collection("channel_links");
 		this.roleLinks = mongo.collection("role_links");
 		this.userLinks = mongo.collection("user_links");
+		this.messageLinks = mongo.collection("message_links");
 		this.platforms = platforms;
 		this.botPrefix = botPrefix;
 		this.syncService = syncService;
@@ -529,6 +569,121 @@ export class LinkService {
 				`Priority: \`${priority}\``,
 				`Discord user ID: \`${discordUserId}\``,
 				`Fluxer user ID: \`${fluxerUserId}\``,
+			].join("\n"),
+		);
+	}
+	async handleUnlinkChannel(context, platformRaw, channelRaw) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		const platform = normalizePlatform(platformRaw);
+		const channelId = normalizeRequiredId(channelRaw);
+		if (!platform || !channelId) {
+			await context.reply(
+				`Usage: ${this.botPrefix}unlink-channel <discord|fluxer> <channel-id>`,
+			);
+			return;
+		}
+		const fieldName = getChannelFieldName(platform);
+		const link = await this.channelLinks.findOne({
+			serverLinkId: base.serverLink._id,
+			[fieldName]: channelId,
+		});
+		if (!link) {
+			await context.reply(
+				`No channel link found for that ${formatPlatformLabel(platform)} channel.`,
+			);
+			return;
+		}
+		await this.channelLinks.deleteOne({ _id: link._id });
+		const messageLinkFilters = [
+			link.discordChannelId
+				? { discordChannelId: link.discordChannelId }
+				: null,
+			link.fluxerChannelId
+				? { fluxerChannelId: link.fluxerChannelId }
+				: null,
+		].filter(Boolean);
+		const removedMessageLinks =
+			messageLinkFilters.length > 0
+				? await this.messageLinks.deleteMany({
+						serverLinkId: base.serverLink._id,
+						$or: messageLinkFilters,
+					})
+				: { deletedCount: 0 };
+		await context.reply(
+			[
+				"Channel link removed successfully.",
+				`Discord channel ID: \`${link.discordChannelId}\``,
+				`Fluxer channel ID: \`${link.fluxerChannelId}\``,
+				`Cached message mappings removed: \`${removedMessageLinks.deletedCount ?? 0}\``,
+			].join("\n"),
+		);
+	}
+	async handleUnlinkRole(context, platformRaw, roleRaw) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		const platform = normalizePlatform(platformRaw);
+		const roleId = normalizeRequiredId(roleRaw);
+		if (!platform || !roleId) {
+			await context.reply(
+				`Usage: ${this.botPrefix}unlink-role <discord|fluxer> <role-id>`,
+			);
+			return;
+		}
+		const fieldName = getRoleFieldName(platform);
+		const link = await this.roleLinks.findOne({
+			serverLinkId: base.serverLink._id,
+			[fieldName]: roleId,
+		});
+		if (!link) {
+			await context.reply(
+				`No role link found for that ${formatPlatformLabel(platform)} role.`,
+			);
+			return;
+		}
+		await this.roleLinks.deleteOne({ _id: link._id });
+		await context.reply(
+			[
+				"Role link removed successfully.",
+				`Discord role ID: \`${link.discordRoleId}\``,
+				`Fluxer role ID: \`${link.fluxerRoleId}\``,
+			].join("\n"),
+		);
+	}
+	async handleUnlinkUser(context, platformRaw, userRaw) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		const platform = normalizePlatform(platformRaw);
+		const userId = normalizeRequiredId(userRaw);
+		if (!platform || !userId) {
+			await context.reply(
+				`Usage: ${this.botPrefix}unlink-user <discord|fluxer> <user-id>`,
+			);
+			return;
+		}
+		const fieldName = getUserFieldName(platform);
+		const link = await this.userLinks.findOne({
+			serverLinkId: base.serverLink._id,
+			[fieldName]: userId,
+		});
+		if (!link) {
+			await context.reply(
+				`No user link found for that ${formatPlatformLabel(platform)} user.`,
+			);
+			return;
+		}
+		await this.userLinks.deleteOne({ _id: link._id });
+		await context.reply(
+			[
+				"User link removed successfully.",
+				`Discord user ID: \`${link.discordUserId}\``,
+				`Fluxer user ID: \`${link.fluxerUserId}\``,
 			].join("\n"),
 		);
 	}

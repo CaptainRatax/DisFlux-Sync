@@ -70,6 +70,39 @@ export function bindCommandDispatcher({
 				return;
 			}
 			if (
+				parsed.name === "unlink-channel" ||
+				parsed.name === "unlinkchannel"
+			) {
+				await linkService.handleUnlinkChannel(
+					context,
+					parsed.args[0],
+					parsed.args[1],
+				);
+				return;
+			}
+			if (
+				parsed.name === "unlink-role" ||
+				parsed.name === "unlinkrole"
+			) {
+				await linkService.handleUnlinkRole(
+					context,
+					parsed.args[0],
+					parsed.args[1],
+				);
+				return;
+			}
+			if (
+				parsed.name === "unlink-user" ||
+				parsed.name === "unlinkuser"
+			) {
+				await linkService.handleUnlinkUser(
+					context,
+					parsed.args[0],
+					parsed.args[1],
+				);
+				return;
+			}
+			if (
 				parsed.name === "list-channels" ||
 				parsed.name === "listchannels"
 			) {
