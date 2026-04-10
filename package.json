@@ -1,0 +1,31 @@
+{
+  "name": "DisFlux-Sync",
+  "version": "0.1.0",
+  "description": "DisFLux Sync is a bridge bot that synchronizes Discord servers and Fluxer servers in real time.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "repository": {
+		"type": "git",
+		"url": "git+https://github.com/CaptainRatax/DisFlux-Sync.git"
+	},
+	"author": "Captain Ratax",
+	"license": "AGPL-3.0-or-later",
+	"bugs": {
+		"url": "https://github.com/CaptainRatax/DisFlux-Sync/issues"
+	},
+	"homepage": "https://github.com/CaptainRatax/DisFlux-Sync#readme",
+  "dependencies": {
+    "@discordjs/core": "^2.4.0",
+    "@discordjs/rest": "^2.6.1",
+    "@discordjs/ws": "^2.0.4",
+    "discord.js": "^14.26.2",
+    "dotenv": "^16.6.1",
+    "express": "^5.2.1",
+    "mongodb": "^7.1.0",
+    "ws": "^8.18.2"
+  }
+}

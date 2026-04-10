@@ -1,0 +1,128 @@
+Terms of Service for DisFLux Sync
+
+These Terms of Service govern the use of DisFLux Sync.
+
+DisFLux Sync is operated by Captain Ratax.
+
+By using DisFLux Sync, you agree to these Terms of Service. If you do not agree, you must stop using the bot.
+
+1. Description of the Service
+
+DisFLux Sync is a bot designed to synchronize supported content and configuration between linked Discord servers and Fluxer servers.
+
+The bot provides linking, synchronization, and related operational features, subject to technical limitations, permissions, platform restrictions, and these Terms of Service.
+
+2. Eligibility and Authority
+
+You may use DisFLux Sync only if you have the authority to do so.
+
+If you configure or use DisFLux Sync in a server, you represent and warrant that:
+
+- You are permitted to use the bot in that environment
+- You have the authority to authorize the requested configuration
+- You will use the bot in compliance with applicable law and applicable platform rules
+
+Certain actions are restricted to server administrators.
+
+3. Acceptable Use
+
+You agree not to use DisFLux Sync to:
+
+- Violate any applicable law, regulation, or third-party right
+- Harass, abuse, threaten, or harm others
+- Distribute unlawful, fraudulent, or malicious content
+- Attempt to exploit, disrupt, overload, or interfere with the service
+- Circumvent platform restrictions, permissions, or rate limits
+- Use the service in a way that could damage the bot, its infrastructure, or other users
+
+4. Third-Party Platforms
+
+DisFLux Sync operates on Discord and Fluxer and depends on third-party infrastructure and APIs.
+
+Your use of Discord, Fluxer, and any related service remains subject to their respective terms, rules, and policies. DisFLux Sync is not responsible for interruptions, limitations, or changes imposed by third-party services.
+
+5. Data Handling
+
+DisFLux Sync is designed to retain minimal persistent data.
+
+The bot does not permanently store message content, channel names, descriptions, usernames, role names, attachments, or full copies of private server content.
+
+The bot retains only the minimum identifiers and configuration data necessary to operate, such as server IDs, channel IDs, role IDs, user IDs, configuration flags, and limited technical mappings, including temporary message identifiers where needed for synchronization features.
+
+Temporary real-time processing of content may occur as required to provide synchronization features.
+
+For more details, see the accompanying Privacy Policy.
+
+6. Availability and Service Changes
+
+DisFLux Sync is provided on an "as is" and "as available" basis.
+
+The operator may modify, suspend, restrict, or discontinue the bot, any feature, or any part of the service at any time, with or without notice.
+
+No guarantee is made that the bot will be available at all times, error-free, uninterrupted, secure, or compatible with every server configuration or third-party platform change.
+
+7. Permissions and Technical Limits
+
+Some features depend on the permissions granted to the bot and the hierarchy rules of the relevant platform.
+
+DisFLux Sync may fail to complete certain actions where:
+
+- The bot lacks sufficient permissions
+- A target role or member is above the bot in the platform hierarchy
+- A platform API or platform rule prevents the requested action
+- The target content type is unsupported or restricted
+
+The operator is not responsible for synchronization limitations caused by platform rules, permission settings, or third-party service behavior.
+
+8. No Warranty
+
+To the maximum extent permitted by law, DisFLux Sync is provided without warranties of any kind, whether express, implied, or statutory, including any implied warranties of merchantability, fitness for a particular purpose, title, non-infringement, availability, or reliability.
+
+9. Limitation of Liability
+
+To the maximum extent permitted by law, the operator of DisFLux Sync will not be liable for any indirect, incidental, special, consequential, exemplary, or punitive damages, or for any loss of profits, loss of revenue, loss of data, loss of goodwill, business interruption, or other intangible losses arising from or related to the use of, or inability to use, the bot.
+
+This limitation applies whether the claim is based on contract, tort, negligence, strict liability, or any other legal theory, even if the operator was advised of the possibility of such damages.
+
+10. Indemnification
+
+You agree to indemnify and hold harmless the operator of DisFLux Sync from and against claims, liabilities, damages, losses, and expenses, including reasonable legal fees, arising out of or related to:
+
+- Your use or misuse of the bot
+- Your violation of these Terms of Service
+- Your violation of applicable law or third-party rights
+- Your configuration or use of the bot in a server without sufficient authority
+
+11. Termination
+
+The operator may suspend or terminate access to DisFLux Sync, in whole or in part, at any time, with or without notice, for any reason, including suspected abuse, legal risk, security concerns, or violation of these Terms of Service.
+
+You may stop using the bot at any time by removing it from your servers and discontinuing use.
+
+12. Intellectual Property
+
+DisFLux Sync, including its code, branding, documentation, and related materials, is protected by applicable intellectual property laws.
+
+Except as otherwise permitted by the applicable license, no right, title, or interest is granted to you except the limited right to use the bot in accordance with these Terms of Service.
+
+13. Governing Law and Dispute Resolution
+
+These Terms of Service are governed by the laws of Portugal, without regard to conflict of law principles.
+
+Any dispute arising out of or in connection with these Terms of Service shall be subject to the exclusive jurisdiction of the competent courts of Portugal, unless applicable law requires otherwise.
+
+14. Changes to These Terms
+
+These Terms of Service may be updated from time to time.
+
+If material changes are made, the updated version will become effective when published with a new effective date.
+
+Your continued use of DisFLux Sync after changes take effect constitutes acceptance of the revised Terms of Service.
+
+15. Contact
+
+If you have questions about these Terms of Service or need to contact the operator regarding legal or compliance matters, use the public contact details made available for DisFLux Sync.
+
+16. Effective Date
+
+Effective Date: 04/10/2026
