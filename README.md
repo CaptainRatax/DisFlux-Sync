@@ -1,12 +1,14 @@
-# DisFLux Sync
+# ![DisFlux Sync Status](https://status.ratot.eu/api/badge/31/status?style=for-the-badge&label=disflux+sync+status) ![DisFlux Sync DB Status](https://status.ratot.eu/api/badge/30/status?style=for-the-badge&label=disflux+sync+db+status) ![DisFlux Sync Uptime](https://status.ratot.eu/api/badge/31/uptime/72?style=for-the-badge&label=disflux+sync+uptime+%2872h%29) ![DisFlux Sync DB Uptime](https://status.ratot.eu/api/badge/30/uptime/72?style=for-the-badge&label=disflux+sync+db+uptime+%2872h%29) ![GitHub release (latest by date)](https://img.shields.io/github/v/release/CaptainRatax/DisFlux-Sync?style=for-the-badge) ![AGPL-3.0 Licensed](https://img.shields.io/github/license/CaptainRatax/DisFlux-Sync?style=for-the-badge) ![Code quality grade on Codacy](https://img.shields.io/codacy/grade/86a07104eb704eb0b8835a1402bc4f24?style=for-the-badge) ![GitHub repository size](https://img.shields.io/github/repo-size/CaptainRatax/DisFlux-Sync?style=for-the-badge) ![GitHub last commit](https://img.shields.io/github/last-commit/CaptainRatax/DisFlux-Sync?style=for-the-badge) ![GitHub issues](https://img.shields.io/github/issues/CaptainRatax/DisFlux-Sync?style=for-the-badge) ![GitHub pull requests](https://img.shields.io/github/issues-pr/CaptainRatax/DisFlux-Sync?style=for-the-badge) ![GitHub language count](https://img.shields.io/github/languages/count/CaptainRatax/DisFlux-Sync?style=for-the-badge) ![GitHub top language](https://img.shields.io/github/languages/top/CaptainRatax/DisFlux-Sync?style=for-the-badge) ![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/CaptainRatax/DisFlux-Sync?style=for-the-badge)
 
-DisFLux Sync is a bridge bot that synchronizes Discord servers and Fluxer servers in real time.
+# DisFlux Sync
 
-It is designed for communities that want to keep both platforms aligned without storing private server content. DisFLux Sync links servers, channels, roles, and users, then mirrors supported changes and messages across both platforms according to the configured synchronization rules.
+DisFlux Sync is a bridge bot that synchronizes Discord servers and Fluxer servers in real time.
 
-> **You do not need to self-host DisFLux Sync or create your own bot to use it.**
+It is designed for communities that want to keep both platforms aligned without storing private server content. DisFlux Sync links servers, channels, roles, and users, then mirrors supported changes and messages across both platforms according to the configured synchronization rules.
+
+> **You do not need to self-host DisFlux Sync or create your own bot to use it.**
 >
-> Most communities can simply invite the **official DisFLux Sync bots** below and start setting up synchronization immediately.
+> Most communities can simply invite the **official DisFlux Sync bots** below and start setting up synchronization immediately.
 
 ## Invite the Official Bots
 
@@ -14,11 +16,11 @@ Use the official hosted bots if you just want to set up synchronization for your
 
 ### Discord Bot Invite
 
-[Invite DisFLux Sync to Discord](https://discord.com/oauth2/authorize?client_id=1491578639018496030&permissions=8&integration_type=0&scope=bot)
+[Invite DisFlux Sync to Discord](https://discord.com/oauth2/authorize?client_id=1491578639018496030&permissions=8&integration_type=0&scope=bot)
 
 ### Fluxer Bot Invite
 
-[Invite DisFLux Sync to Fluxer](https://web.fluxer.app/oauth2/authorize?client_id=1491587030201300830&scope=bot&permissions=8)
+[Invite DisFlux Sync to Fluxer](https://web.fluxer.app/oauth2/authorize?client_id=1491587030201300830&scope=bot&permissions=8)
 
 ## Quick Start
 
@@ -43,19 +45,19 @@ Use the official hosted bots if you just want to set up synchronization for your
 
 ## Status Page
 
-DisFLux Sync will have an official status page for uptime, incidents, and operational updates.
+You can check the current status of DisFlux Sync, its database, and view incident history on the official status page:
 
-TBD
+🔗 [status.ratot.eu/disflux-sync](https://status.ratot.eu/status/disflux-sync)
 
-Example:
+The status page provides:
 
-```text
-https://status.example.com
-```
+- Real-time uptime information
+- Database status
+- Historical incidents and outages
 
 ## How It Works
 
-DisFLux Sync does not copy an entire server into a database.
+DisFlux Sync does not copy an entire server into a database.
 
 The bot works by:
 
@@ -71,7 +73,7 @@ Each sync link can define its own priority:
 
 ## Data Handling Summary
 
-DisFLux Sync is intentionally designed to retain as little information as possible.
+DisFlux Sync is intentionally designed to retain as little information as possible.
 
 The bot does **not** permanently store:
 
@@ -96,7 +98,7 @@ For more details, see [PRIVACY POLICY.txt](./PRIVACY%20POLICY.txt).
 
 ## Requirements
 
-Before running DisFLux Sync, make sure you have:
+Before running DisFlux Sync, make sure you have:
 
 - [Node.js](https://nodejs.org/)
 - [npm](https://www.npmjs.com/)
@@ -202,7 +204,7 @@ Examples:
 
 Important:
 
-- Messages from **DisFLux Sync itself** are never synchronized
+- Messages from **DisFlux Sync itself** are never synchronized
 - Messages from **other bots** are only synchronized when the linked channel allows it
 - Messages from **webhooks** are only synchronized when the linked channel allows it
 
@@ -271,7 +273,7 @@ Lists linked users in embeds with pagination.
 
 ## Supported Synchronization
 
-DisFLux Sync currently supports real-time synchronization for supported linked entities, including:
+DisFlux Sync currently supports real-time synchronization for supported linked entities, including:
 
 - Messages in linked channels
 - Replies
