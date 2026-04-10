@@ -1,18 +1,18 @@
-Privacy Policy for DisFLux Sync
+Privacy Policy for DisFlux Sync
 
-This Privacy Policy explains how DisFLux Sync collects, uses, processes, and retains information when the bot is used on Discord and Fluxer.
+This Privacy Policy explains how DisFlux Sync collects, uses, processes, and retains information when the bot is used on Discord and Fluxer.
 
-DisFLux Sync is operated by Captain Ratax.
+DisFlux Sync is operated by Captain Ratax.
 
-By using DisFLux Sync, you acknowledge this Privacy Policy.
+By using DisFlux Sync, you acknowledge this Privacy Policy.
 
 1. Scope
 
-This Privacy Policy applies to the use of DisFLux Sync and any related support or operational services made available by the bot owner.
+This Privacy Policy applies to the use of DisFlux Sync and any related support or operational services made available by the bot owner.
 
 2. Information We Collect
 
-DisFLux Sync is designed to minimize data retention.
+DisFlux Sync is designed to minimize data retention.
 
 The bot may collect and process limited technical identifiers and configuration data required to provide its synchronization features, including:
 
@@ -25,7 +25,7 @@ The bot may collect and process limited technical identifiers and configuration 
 
 3. Information We Do Not Retain
 
-DisFLux Sync does not permanently store private server content.
+DisFlux Sync does not permanently store private server content.
 
 The bot does not permanently retain:
 
@@ -42,13 +42,13 @@ Where real-time synchronization requires temporary processing of content, embeds
 
 4. Real-Time Processing
 
-To provide synchronization features, DisFLux Sync may temporarily process message content, embeds, attachments, role updates, nickname updates, mentions, and other supported events in real time.
+To provide synchronization features, DisFlux Sync may temporarily process message content, embeds, attachments, role updates, nickname updates, mentions, and other supported events in real time.
 
 This processing is performed solely for the purpose of delivering the requested synchronization functionality between linked Discord and Fluxer servers.
 
 5. How We Use Information
 
-DisFLux Sync uses the limited information it processes and stores to:
+DisFlux Sync uses the limited information it processes and stores to:
 
 - Link Discord and Fluxer servers
 - Link channels, roles, and users
@@ -60,7 +60,7 @@ DisFLux Sync uses the limited information it processes and stores to:
 
 6. Data Retention
 
-DisFLux Sync retains only the minimum persistent data necessary to operate the service.
+DisFlux Sync retains only the minimum persistent data necessary to operate the service.
 
 This generally includes identifier-based mappings and configuration settings until:
 
@@ -73,9 +73,9 @@ Temporary message identifier mappings used for synchronization mechanics may be 
 
 7. Data Sharing
 
-DisFLux Sync does not sell personal information.
+DisFlux Sync does not sell personal information.
 
-DisFLux Sync does not share private server content with third parties for marketing or advertising purposes.
+DisFlux Sync does not share private server content with third parties for marketing or advertising purposes.
 
 Information may be disclosed only in the following limited circumstances:
 
@@ -85,25 +85,25 @@ Information may be disclosed only in the following limited circumstances:
 
 8. International Processing
 
-Because Discord, Fluxer, hosting providers, or related technical infrastructure may operate internationally, technical data processed by DisFLux Sync may pass through systems located in different jurisdictions.
+Because Discord, Fluxer, hosting providers, or related technical infrastructure may operate internationally, technical data processed by DisFlux Sync may pass through systems located in different jurisdictions.
 
 9. Data Security
 
 Reasonable technical and organizational measures are taken to protect stored data against unauthorized access, loss, misuse, or alteration.
 
-However, no system can guarantee absolute security, and DisFLux Sync cannot guarantee that unauthorized access, loss, or misuse will never occur.
+However, no system can guarantee absolute security, and DisFlux Sync cannot guarantee that unauthorized access, loss, or misuse will never occur.
 
 10. Third-Party Platforms
 
-DisFLux Sync operates on third-party platforms, including Discord and Fluxer. Your use of those platforms is also governed by their own terms, privacy practices, and policies.
+DisFlux Sync operates on third-party platforms, including Discord and Fluxer. Your use of those platforms is also governed by their own terms, privacy practices, and policies.
 
-DisFLux Sync is not responsible for the independent privacy or security practices of Discord, Fluxer, or other third-party services.
+DisFlux Sync is not responsible for the independent privacy or security practices of Discord, Fluxer, or other third-party services.
 
 11. Your Choices
 
 Server administrators control whether to link servers and whether to configure channel synchronization, including optional synchronization of other bot messages and webhook messages.
 
-If you no longer want DisFLux Sync to process data in a server, the bot should be removed and any relevant links or configurations should be deleted.
+If you no longer want DisFlux Sync to process data in a server, the bot should be removed and any relevant links or configurations should be deleted.
 
 12. Changes to This Privacy Policy
 
@@ -111,11 +111,11 @@ This Privacy Policy may be updated from time to time.
 
 If material changes are made, the updated version will become effective when published with a new effective date.
 
-Your continued use of DisFLux Sync after changes take effect constitutes acceptance of the revised Privacy Policy.
+Your continued use of DisFlux Sync after changes take effect constitutes acceptance of the revised Privacy Policy.
 
 13. Contact
 
-If you have questions about this Privacy Policy, legal requests, or privacy-related concerns, contact the operator using the public contact details made available for DisFLux Sync.
+If you have questions about this Privacy Policy, legal requests, or privacy-related concerns, contact the operator using the public contact details made available for DisFlux Sync.
 
 14. Effective Date
 

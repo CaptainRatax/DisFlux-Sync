@@ -1,4 +1,4 @@
-// DisFLux Sync - DisFLux Sync is a bridge bot that synchronizes Discord servers and Fluxer servers in real time.
+// DisFlux Sync - DisFlux Sync is a bridge bot that synchronizes Discord servers and Fluxer servers in real time.
 // Copyright (C) 2026 CaptainRatax
 // Licensed under the GNU Affero General Public License v3.0 or later
 // See the LICENSE file for details.
@@ -70,7 +70,7 @@ export class InfoService {
 	}
 	async handleHelp(context) {
 		const embed = buildEmbed({
-			title: "DisFLux Sync - Help",
+			title: "DisFlux Sync - Help",
 			description: "Synchronizes linked Discord and Fluxer servers.",
 			fields: [
 				{
@@ -111,7 +111,7 @@ export class InfoService {
 						"5th extra argument: sync webhook messages",
 						"Accepted values: `yes`, `no`, `true`, `false`, `1`, `0`",
 						"",
-						"Messages from DisFLux Sync itself are never mirrored.",
+						"Messages from DisFlux Sync itself are never mirrored.",
 					].join("\n"),
 				},
 				{
@@ -122,7 +122,7 @@ export class InfoService {
 					].join("\n"),
 				},
 			],
-			footerText: "DisFLux Sync",
+			footerText: "DisFlux Sync",
 		});
 		await context.reply({ embeds: [embed] });
 	}

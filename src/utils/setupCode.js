@@ -1,4 +1,4 @@
-// DisFLux Sync - DisFLux Sync is a bridge bot that synchronizes Discord servers and Fluxer servers in real time.
+// DisFlux Sync - DisFlux Sync is a bridge bot that synchronizes Discord servers and Fluxer servers in real time.
 // Copyright (C) 2026 CaptainRatax
 // Licensed under the GNU Affero General Public License v3.0 or later
 // See the LICENSE file for details.
