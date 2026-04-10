@@ -1,0 +1,27 @@
+name: Deploy (production)
+
+on:
+    push:
+        branches: ["main"]
+
+jobs:
+    deploy:
+        permissions: {}
+        runs-on: [self-hosted, linux, x64, disflux-sync]
+        environment: production
+
+        steps:
+            - name: Deploy to Proxmox container
+              shell: bash
+              run: |
+                  set -euo pipefail
+
+                  mkdir -p ~/.ssh
+                  chmod 700 ~/.ssh
+
+                  echo "${{ secrets.PROD_SSH_KEY }}" > ~/.ssh/id_ed25519
+                  chmod 600 ~/.ssh/id_ed25519
+
+                  ssh -o StrictHostKeyChecking=no \
+                      "${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }}" \
+                      "/home/bot/deploy.sh"
