@@ -578,7 +578,7 @@ export class LinkService {
 			return;
 		}
 		const platform = normalizePlatform(platformRaw);
-		const channelId = normalizeRequiredId(channelRaw);
+		const channelId = normalizeId(channelRaw);
 		if (!platform || !channelId) {
 			await context.reply(
 				`Usage: ${this.botPrefix}unlink-channel <discord|fluxer> <channel-id>`,
@@ -627,7 +627,7 @@ export class LinkService {
 			return;
 		}
 		const platform = normalizePlatform(platformRaw);
-		const roleId = normalizeRequiredId(roleRaw);
+		const roleId = normalizeId(roleRaw);
 		if (!platform || !roleId) {
 			await context.reply(
 				`Usage: ${this.botPrefix}unlink-role <discord|fluxer> <role-id>`,
@@ -660,7 +660,7 @@ export class LinkService {
 			return;
 		}
 		const platform = normalizePlatform(platformRaw);
-		const userId = normalizeRequiredId(userRaw);
+		const userId = normalizeId(userRaw);
 		if (!platform || !userId) {
 			await context.reply(
 				`Usage: ${this.botPrefix}unlink-user <discord|fluxer> <user-id>`,
