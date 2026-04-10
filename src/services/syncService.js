@@ -133,26 +133,60 @@ export class SyncService {
 		}
 
 		for (const userLink of userLinks) {
-			const snapshots = await this.fetchUserSnapshots(
-				serverLink,
-				userLink,
-			);
+			await this.syncLinkedUser(serverLink, userLink, roleLinks);
+		}
+	}
 
+	async syncLinkedUser(serverLink, userLink, roleLinks = null) {
+		const linkedRoleLinks =
+			roleLinks ??
+			(await this.roleLinks
+				.find({
+					serverLinkId: serverLink._id,
+				})
+				.toArray());
+
+		const snapshots = await this.fetchUserSnapshots(serverLink, userLink);
+
+		if (!snapshots) {
+			return;
+		}
+
+		await this.syncNickname(
+			serverLink,
+			userLink,
+			userLink.priority,
+			snapshots,
+		);
+		await this.syncRoleMemberships(
+			serverLink,
+			userLink,
+			linkedRoleLinks,
+			(roleLink) => roleLink.priority,
+			snapshots,
+		);
+	}
+
+	async syncLinkedRoleAcrossUsers(serverLink, roleLink) {
+		await this.syncRoleMetadata(serverLink, roleLink, roleLink.priority);
+
+		const userLinks = await this.userLinks
+			.find({
+				serverLinkId: serverLink._id,
+			})
+			.toArray();
+
+		for (const userLink of userLinks) {
+			const snapshots = await this.fetchUserSnapshots(serverLink, userLink);
 			if (!snapshots) {
 				continue;
 			}
 
-			await this.syncNickname(
-				serverLink,
-				userLink,
-				userLink.priority,
-				snapshots,
-			);
 			await this.syncRoleMemberships(
 				serverLink,
 				userLink,
-				roleLinks,
-				(roleLink) => roleLink.priority,
+				[roleLink],
+				() => roleLink.priority,
 				snapshots,
 			);
 		}
