@@ -258,12 +258,12 @@ export class LinkService {
 			discordChannel = created;
 		}
 		const existingDiscordSide = await this.channelLinks.findOne({
-			serverLinkId: base.serverLink._id,
-			discordChannelId,
+			serverLinkId: { $eq: base.serverLink._id },
+			discordChannelId: { $eq: discordChannelId },
 		});
 		const existingFluxerSide = await this.channelLinks.findOne({
-			serverLinkId: base.serverLink._id,
-			fluxerChannelId,
+			serverLinkId: { $eq: base.serverLink._id },
+			fluxerChannelId: { $eq: fluxerChannelId },
 		});
 		if (
 			existingDiscordSide &&
@@ -373,8 +373,8 @@ export class LinkService {
 				return;
 			}
 			const existing = await this.roleLinks.findOne({
-				serverLinkId: base.serverLink._id,
-				discordRoleId,
+				serverLinkId: { $eq: base.serverLink._id },
+				discordRoleId: { $eq: discordRoleId },
 			});
 			if (existing) {
 				await context.reply("That Discord role is already linked.");
@@ -403,8 +403,8 @@ export class LinkService {
 				return;
 			}
 			const existing = await this.roleLinks.findOne({
-				serverLinkId: base.serverLink._id,
-				fluxerRoleId,
+				serverLinkId: { $eq: base.serverLink._id },
+				fluxerRoleId: { $eq: fluxerRoleId },
 			});
 			if (existing) {
 				await context.reply("That Fluxer role is already linked.");
@@ -469,7 +469,7 @@ export class LinkService {
 
 		if (this.syncService) {
 			const roleLink = await this.roleLinks.findOne({
-				_id: result.insertedId,
+				_id: { $eq: result.insertedId },
 			});
 
 			if (roleLink) {
@@ -530,16 +530,16 @@ export class LinkService {
 			return;
 		}
 		const existingDiscordSide = await this.userLinks.findOne({
-			serverLinkId: base.serverLink._id,
-			discordUserId,
+			serverLinkId: { $eq: base.serverLink._id },
+			discordUserId: { $eq: discordUserId },
 		});
 		if (existingDiscordSide) {
 			await context.reply("That Discord user is already linked.");
 			return;
 		}
 		const existingFluxerSide = await this.userLinks.findOne({
-			serverLinkId: base.serverLink._id,
-			fluxerUserId,
+			serverLinkId: { $eq: base.serverLink._id },
+			fluxerUserId: { $eq: fluxerUserId },
 		});
 		if (existingFluxerSide) {
 			await context.reply("That Fluxer user is already linked.");
@@ -555,7 +555,7 @@ export class LinkService {
 
 		if (this.syncService) {
 			const userLink = await this.userLinks.findOne({
-				_id: result.insertedId,
+				_id: { $eq: result.insertedId },
 			});
 
 			if (userLink) {
@@ -587,8 +587,8 @@ export class LinkService {
 		}
 		const fieldName = getChannelFieldName(platform);
 		const link = await this.channelLinks.findOne({
-			serverLinkId: base.serverLink._id,
-			[fieldName]: channelId,
+			serverLinkId: { $eq: base.serverLink._id },
+			[fieldName]: { $eq: channelId },
 		});
 		if (!link) {
 			await context.reply(
@@ -636,8 +636,8 @@ export class LinkService {
 		}
 		const fieldName = getRoleFieldName(platform);
 		const link = await this.roleLinks.findOne({
-			serverLinkId: base.serverLink._id,
-			[fieldName]: roleId,
+			serverLinkId: { $eq: base.serverLink._id },
+			[fieldName]: { $eq: roleId },
 		});
 		if (!link) {
 			await context.reply(
@@ -669,8 +669,8 @@ export class LinkService {
 		}
 		const fieldName = getUserFieldName(platform);
 		const link = await this.userLinks.findOne({
-			serverLinkId: base.serverLink._id,
-			[fieldName]: userId,
+			serverLinkId: { $eq: base.serverLink._id },
+			[fieldName]: { $eq: userId },
 		});
 		if (!link) {
 			await context.reply(
@@ -726,7 +726,7 @@ export class LinkService {
 	}
 	async getServerLinkForContext(platform, guildId) {
 		const fieldName = getGuildFieldName(platform);
-		return this.serverLinks.findOne({ [fieldName]: guildId });
+		return this.serverLinks.findOne({ [fieldName]: { $eq: guildId } });
 	}
 	async findLinkedChannelId(
 		serverLinkId,
@@ -746,8 +746,8 @@ export class LinkService {
 				? "discordChannelId"
 				: "fluxerChannelId";
 		const link = await this.channelLinks.findOne({
-			serverLinkId,
-			[sourceField]: sourceChannelId,
+			serverLinkId: { $eq: serverLinkId },
+			[sourceField]: { $eq: sourceChannelId },
 		});
 		return link?.[targetField] ?? null;
 	}

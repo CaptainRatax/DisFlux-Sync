@@ -126,10 +126,10 @@ export class SetupService {
 		}
 
 		await this.pendingSetups.deleteMany({
-			sourcePlatform,
-			sourceGuildId,
-			targetPlatform,
-			targetGuildId: normalizedTargetGuildId,
+			sourcePlatform: { $eq: sourcePlatform },
+			sourceGuildId: { $eq: sourceGuildId },
+			targetPlatform: { $eq: targetPlatform },
+			targetGuildId: { $eq: normalizedTargetGuildId },
 		});
 
 		const code = await this.createUniqueCode();
@@ -174,7 +174,9 @@ export class SetupService {
 			return;
 		}
 
-		const pending = await this.pendingSetups.findOne({ code });
+		const pending = await this.pendingSetups.findOne({
+			code: { $eq: code },
+		});
 
 		if (!pending) {
 			await context.reply("That setup code is invalid or has expired.");
@@ -294,13 +296,15 @@ export class SetupService {
 
 	async findServerLinkForGuild(platform, guildId) {
 		const fieldName = getGuildFieldName(platform);
-		return this.serverLinks.findOne({ [fieldName]: guildId });
+		return this.serverLinks.findOne({ [fieldName]: { $eq: guildId } });
 	}
 
 	async createUniqueCode() {
 		for (let attempt = 0; attempt < 10; attempt += 1) {
 			const code = generateSetupCode(this.setupCodeLength);
-			const existing = await this.pendingSetups.findOne({ code });
+			const existing = await this.pendingSetups.findOne({
+				code: { $eq: code },
+			});
 
 			if (!existing) {
 				return code;

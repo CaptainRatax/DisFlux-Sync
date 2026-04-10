@@ -246,7 +246,7 @@ export class MessageBridgeService {
 					? "discordChannelId"
 					: "fluxerChannelId";
 			const channelLink = await this.channelLinks.findOne({
-				[sourceChannelField]: event.channelId,
+				[sourceChannelField]: { $eq: event.channelId },
 			});
 			if (!channelLink) {
 				return;
@@ -262,7 +262,7 @@ export class MessageBridgeService {
 				return;
 			}
 			const serverLink = await this.serverLinks.findOne({
-				_id: channelLink.serverLinkId,
+				_id: { $eq: channelLink.serverLinkId },
 			});
 			if (!serverLink) {
 				return;
@@ -347,7 +347,7 @@ export class MessageBridgeService {
 				return;
 			}
 			const serverLink = await this.serverLinks.findOne({
-				_id: messageLink.serverLinkId,
+				_id: { $eq: messageLink.serverLinkId },
 			});
 			if (!serverLink) {
 				return;
@@ -809,14 +809,14 @@ export class MessageBridgeService {
 				? "discordMessageId"
 				: "fluxerMessageId";
 		return this.messageLinks.findOne({
-			serverLinkId,
-			[sourceField]: sourceMessageId,
+			serverLinkId: { $eq: serverLinkId },
+			[sourceField]: { $eq: sourceMessageId },
 		});
 	}
 	async findMessageLink(platform, messageId) {
 		const fieldName =
 			platform === "discord" ? "discordMessageId" : "fluxerMessageId";
-		return this.messageLinks.findOne({ [fieldName]: messageId });
+		return this.messageLinks.findOne({ [fieldName]: { $eq: messageId } });
 	}
 	async storeMessageLink({
 		serverLinkId,
