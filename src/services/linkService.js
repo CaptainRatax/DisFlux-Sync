@@ -4,46 +4,10 @@
 // See the LICENSE file for details.
 
 import { ChannelType, PermissionsBitField } from "discord.js";
-import { ObjectId } from "mongodb";
-
-const PLATFORM_ID_PATTERN = /^\d{1,32}$/;
-
-function sanitizePlatformId(value) {
-	if (
-		typeof value !== "string" &&
-		typeof value !== "number" &&
-		typeof value !== "bigint"
-	) {
-		return null;
-	}
-
-	const normalized = String(value).trim();
-	if (!PLATFORM_ID_PATTERN.test(normalized)) {
-		return null;
-	}
-
-	return normalized;
-}
-function sanitizeMongoObjectId(value) {
-	if (value instanceof ObjectId) {
-		return value;
-	}
-	if (typeof value !== "string") {
-		return null;
-	}
-
-	const normalized = value.trim();
-	if (!ObjectId.isValid(normalized)) {
-		return null;
-	}
-
-	const objectId = new ObjectId(normalized);
-	if (objectId.toHexString() !== normalized.toLowerCase()) {
-		return null;
-	}
-
-	return objectId;
-}
+import {
+	sanitizeMongoObjectId,
+	sanitizePlatformId,
+} from "../utils/sanitize.js";
 function normalizeId(value) {
 	if (typeof value !== "string" && typeof value !== "number") {
 		return null;

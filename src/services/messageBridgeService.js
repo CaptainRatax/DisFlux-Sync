@@ -3,49 +3,11 @@
 // Licensed under the GNU Affero General Public License v3.0 or later
 // See the LICENSE file for details.
 
-import { ObjectId } from "mongodb";
-
 import { logger } from "../core/logger.js";
-
-const PLATFORM_ID_PATTERN = /^\d{1,32}$/;
-
-function sanitizePlatformId(value) {
-	if (
-		typeof value !== "string" &&
-		typeof value !== "number" &&
-		typeof value !== "bigint"
-	) {
-		return null;
-	}
-
-	const normalized = String(value).trim();
-	if (!PLATFORM_ID_PATTERN.test(normalized)) {
-		return null;
-	}
-
-	return normalized;
-}
-
-function sanitizeMongoObjectId(value) {
-	if (value instanceof ObjectId) {
-		return value;
-	}
-	if (typeof value !== "string") {
-		return null;
-	}
-
-	const normalized = value.trim();
-	if (!ObjectId.isValid(normalized)) {
-		return null;
-	}
-
-	const objectId = new ObjectId(normalized);
-	if (objectId.toHexString() !== normalized.toLowerCase()) {
-		return null;
-	}
-
-	return objectId;
-}
+import {
+	sanitizeMongoObjectId,
+	sanitizePlatformId,
+} from "../utils/sanitize.js";
 
 function getOppositePlatform(platform) {
 	if (platform === "discord") {

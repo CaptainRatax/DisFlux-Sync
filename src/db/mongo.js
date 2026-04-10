@@ -145,6 +145,26 @@ export class MongoService {
 		);
 
 		await this.db.collection("message_links").createIndex(
+			{ serverLinkId: 1, discordChannelId: 1 },
+			{
+				name: "idx_message_link_discord_channel",
+				partialFilterExpression: {
+					discordChannelId: { $type: "string" },
+				},
+			},
+		);
+
+		await this.db.collection("message_links").createIndex(
+			{ serverLinkId: 1, fluxerChannelId: 1 },
+			{
+				name: "idx_message_link_fluxer_channel",
+				partialFilterExpression: {
+					fluxerChannelId: { $type: "string" },
+				},
+			},
+		);
+
+		await this.db.collection("message_links").createIndex(
 			{ createdAt: 1 },
 			{
 				expireAfterSeconds: this.messageLinkTtlDays * 24 * 60 * 60,

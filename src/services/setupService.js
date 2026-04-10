@@ -5,9 +5,12 @@
 
 import {
 	generateSetupCode,
-	normalizeSetupCode,
 	formatSetupCode,
 } from "../utils/setupCode.js";
+import {
+	sanitizePlatformId,
+	sanitizeSetupCode,
+} from "../utils/sanitize.js";
 
 function getGuildFieldName(platform) {
 	if (platform === "discord") {
@@ -31,43 +34,6 @@ function getOtherPlatform(platform) {
 	}
 
 	throw new Error(`Unsupported platform: ${platform}`);
-}
-
-const PLATFORM_ID_PATTERN = /^\d{1,32}$/;
-const SETUP_CODE_PATTERN = /^[A-Z0-9]+$/;
-
-function sanitizePlatformId(value) {
-	if (
-		typeof value !== "string" &&
-		typeof value !== "number" &&
-		typeof value !== "bigint"
-	) {
-		return null;
-	}
-
-	const normalized = String(value).trim();
-	if (!PLATFORM_ID_PATTERN.test(normalized)) {
-		return null;
-	}
-
-	return normalized;
-}
-
-function sanitizeSetupCode(value, expectedLength) {
-	if (typeof value !== "string" && typeof value !== "number") {
-		return null;
-	}
-
-	const code = normalizeSetupCode(value);
-	if (
-		!code ||
-		!SETUP_CODE_PATTERN.test(code) ||
-		code.length !== expectedLength
-	) {
-		return null;
-	}
-
-	return code;
 }
 
 export class SetupService {
