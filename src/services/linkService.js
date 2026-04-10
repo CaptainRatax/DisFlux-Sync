@@ -4,19 +4,60 @@
 // See the LICENSE file for details.
 
 import { ChannelType, PermissionsBitField } from "discord.js";
-function normalizeId(value) {
-	const normalized = String(value ?? "").trim();
-	if (!normalized) {
+import { ObjectId } from "mongodb";
+
+const PLATFORM_ID_PATTERN = /^\d{1,32}$/;
+
+function sanitizePlatformId(value) {
+	if (
+		typeof value !== "string" &&
+		typeof value !== "number" &&
+		typeof value !== "bigint"
+	) {
 		return null;
 	}
+
+	const normalized = String(value).trim();
+	if (!PLATFORM_ID_PATTERN.test(normalized)) {
+		return null;
+	}
+
+	return normalized;
+}
+function sanitizeMongoObjectId(value) {
+	if (value instanceof ObjectId) {
+		return value;
+	}
+	if (typeof value !== "string") {
+		return null;
+	}
+
+	const normalized = value.trim();
+	if (!ObjectId.isValid(normalized)) {
+		return null;
+	}
+
+	const objectId = new ObjectId(normalized);
+	if (objectId.toHexString() !== normalized.toLowerCase()) {
+		return null;
+	}
+
+	return objectId;
+}
+function normalizeId(value) {
+	if (typeof value !== "string" && typeof value !== "number") {
+		return null;
+	}
+
+	const normalized = String(value).trim();
 	if (["auto", "null", "none", "-"].includes(normalized.toLowerCase())) {
 		return null;
 	}
-	return normalized;
+
+	return sanitizePlatformId(normalized);
 }
 function normalizeRequiredId(value) {
-	const normalized = String(value ?? "").trim();
-	return normalized || null;
+	return sanitizePlatformId(value);
 }
 function normalizePriority(value) {
 	return normalizePlatform(value);
@@ -203,7 +244,7 @@ export class LinkService {
 			}
 			const mappedParentId = template.parentId
 				? await this.findLinkedChannelId(
-						base.serverLink._id,
+						base.serverLinkId,
 						"discord",
 						template.parentId,
 						"fluxer",
@@ -220,7 +261,13 @@ export class LinkService {
 				);
 				return;
 			}
-			fluxerChannelId = created.id;
+			fluxerChannelId = normalizeRequiredId(created.id);
+			if (!fluxerChannelId) {
+				await context.reply(
+					"Fluxer returned an invalid ID for the created channel.",
+				);
+				return;
+			}
 			fluxerChannel = created;
 		}
 		if (!discordChannelId) {
@@ -237,7 +284,7 @@ export class LinkService {
 			}
 			const mappedParentId = template.parentId
 				? await this.findLinkedChannelId(
-						base.serverLink._id,
+						base.serverLinkId,
 						"fluxer",
 						template.parentId,
 						"discord",
@@ -254,15 +301,21 @@ export class LinkService {
 				);
 				return;
 			}
-			discordChannelId = created.id;
+			discordChannelId = normalizeRequiredId(created.id);
+			if (!discordChannelId) {
+				await context.reply(
+					"Discord returned an invalid ID for the created channel.",
+				);
+				return;
+			}
 			discordChannel = created;
 		}
 		const existingDiscordSide = await this.channelLinks.findOne({
-			serverLinkId: { $eq: base.serverLink._id },
+			serverLinkId: { $eq: base.serverLinkId },
 			discordChannelId: { $eq: discordChannelId },
 		});
 		const existingFluxerSide = await this.channelLinks.findOne({
-			serverLinkId: { $eq: base.serverLink._id },
+			serverLinkId: { $eq: base.serverLinkId },
 			fluxerChannelId: { $eq: fluxerChannelId },
 		});
 		if (
@@ -303,7 +356,7 @@ export class LinkService {
 			return;
 		}
 		await this.channelLinks.insertOne({
-			serverLinkId: base.serverLink._id,
+			serverLinkId: base.serverLinkId,
 			discordChannelId,
 			fluxerChannelId,
 			priority,
@@ -373,7 +426,7 @@ export class LinkService {
 				return;
 			}
 			const existing = await this.roleLinks.findOne({
-				serverLinkId: { $eq: base.serverLink._id },
+				serverLinkId: { $eq: base.serverLinkId },
 				discordRoleId: { $eq: discordRoleId },
 			});
 			if (existing) {
@@ -403,7 +456,7 @@ export class LinkService {
 				return;
 			}
 			const existing = await this.roleLinks.findOne({
-				serverLinkId: { $eq: base.serverLink._id },
+				serverLinkId: { $eq: base.serverLinkId },
 				fluxerRoleId: { $eq: fluxerRoleId },
 			});
 			if (existing) {
@@ -433,7 +486,13 @@ export class LinkService {
 				);
 				return;
 			}
-			fluxerRoleId = created.id;
+			fluxerRoleId = normalizeRequiredId(created.id);
+			if (!fluxerRoleId) {
+				await context.reply(
+					"Fluxer returned an invalid ID for the created role.",
+				);
+				return;
+			}
 		}
 		if (!discordRoleId) {
 			const template = await this.platforms.fluxer.getGuildRoleTemplate(
@@ -457,27 +516,29 @@ export class LinkService {
 				);
 				return;
 			}
-			discordRoleId = created.id;
+			discordRoleId = normalizeRequiredId(created.id);
+			if (!discordRoleId) {
+				await context.reply(
+					"Discord returned an invalid ID for the created role.",
+				);
+				return;
+			}
 		}
-		const result = await this.roleLinks.insertOne({
-			serverLinkId: base.serverLink._id,
+		const roleLink = {
+			serverLinkId: base.serverLinkId,
 			discordRoleId,
 			fluxerRoleId,
 			priority,
 			createdAt: new Date(),
-		});
+		};
+		const result = await this.roleLinks.insertOne(roleLink);
+		roleLink._id = result.insertedId;
 
 		if (this.syncService) {
-			const roleLink = await this.roleLinks.findOne({
-				_id: { $eq: result.insertedId },
-			});
-
-			if (roleLink) {
-				await this.syncService.syncLinkedRoleAcrossUsers(
-					base.serverLink,
-					roleLink,
-				);
-			}
+			await this.syncService.syncLinkedRoleAcrossUsers(
+				base.serverLink,
+				roleLink,
+			);
 		}
 
 		await context.reply(
@@ -530,7 +591,7 @@ export class LinkService {
 			return;
 		}
 		const existingDiscordSide = await this.userLinks.findOne({
-			serverLinkId: { $eq: base.serverLink._id },
+			serverLinkId: { $eq: base.serverLinkId },
 			discordUserId: { $eq: discordUserId },
 		});
 		if (existingDiscordSide) {
@@ -538,29 +599,25 @@ export class LinkService {
 			return;
 		}
 		const existingFluxerSide = await this.userLinks.findOne({
-			serverLinkId: { $eq: base.serverLink._id },
+			serverLinkId: { $eq: base.serverLinkId },
 			fluxerUserId: { $eq: fluxerUserId },
 		});
 		if (existingFluxerSide) {
 			await context.reply("That Fluxer user is already linked.");
 			return;
 		}
-		const result = await this.userLinks.insertOne({
-			serverLinkId: base.serverLink._id,
+		const userLink = {
+			serverLinkId: base.serverLinkId,
 			discordUserId,
 			fluxerUserId,
 			priority,
 			createdAt: new Date(),
-		});
+		};
+		const result = await this.userLinks.insertOne(userLink);
+		userLink._id = result.insertedId;
 
 		if (this.syncService) {
-			const userLink = await this.userLinks.findOne({
-				_id: { $eq: result.insertedId },
-			});
-
-			if (userLink) {
-				await this.syncService.syncLinkedUser(base.serverLink, userLink);
-			}
+			await this.syncService.syncLinkedUser(base.serverLink, userLink);
 		}
 
 		await context.reply(
@@ -587,7 +644,7 @@ export class LinkService {
 		}
 		const fieldName = getChannelFieldName(platform);
 		const link = await this.channelLinks.findOne({
-			serverLinkId: { $eq: base.serverLink._id },
+			serverLinkId: { $eq: base.serverLinkId },
 			[fieldName]: { $eq: channelId },
 		});
 		if (!link) {
@@ -597,18 +654,24 @@ export class LinkService {
 			return;
 		}
 		await this.channelLinks.deleteOne({ _id: link._id });
+		const linkedDiscordChannelId = normalizeRequiredId(
+			link.discordChannelId,
+		);
+		const linkedFluxerChannelId = normalizeRequiredId(
+			link.fluxerChannelId,
+		);
 		const messageLinkFilters = [
-			link.discordChannelId
-				? { discordChannelId: link.discordChannelId }
+			linkedDiscordChannelId
+				? { discordChannelId: { $eq: linkedDiscordChannelId } }
 				: null,
-			link.fluxerChannelId
-				? { fluxerChannelId: link.fluxerChannelId }
+			linkedFluxerChannelId
+				? { fluxerChannelId: { $eq: linkedFluxerChannelId } }
 				: null,
 		].filter(Boolean);
 		const removedMessageLinks =
 			messageLinkFilters.length > 0
 				? await this.messageLinks.deleteMany({
-						serverLinkId: base.serverLink._id,
+						serverLinkId: base.serverLinkId,
 						$or: messageLinkFilters,
 					})
 				: { deletedCount: 0 };
@@ -636,7 +699,7 @@ export class LinkService {
 		}
 		const fieldName = getRoleFieldName(platform);
 		const link = await this.roleLinks.findOne({
-			serverLinkId: { $eq: base.serverLink._id },
+			serverLinkId: { $eq: base.serverLinkId },
 			[fieldName]: { $eq: roleId },
 		});
 		if (!link) {
@@ -669,7 +732,7 @@ export class LinkService {
 		}
 		const fieldName = getUserFieldName(platform);
 		const link = await this.userLinks.findOne({
-			serverLinkId: { $eq: base.serverLink._id },
+			serverLinkId: { $eq: base.serverLinkId },
 			[fieldName]: { $eq: userId },
 		});
 		if (!link) {
@@ -704,6 +767,12 @@ export class LinkService {
 			);
 			return null;
 		}
+		const serverLinkId = sanitizeMongoObjectId(serverLink._id);
+		if (!serverLinkId) {
+			await context.reply("The saved server link is invalid.");
+			return null;
+		}
+		serverLink._id = serverLinkId;
 		const userIsAdmin = await this.platforms[
 			context.platform
 		].userHasAdministrator(context.guildId, context.userId);
@@ -722,11 +791,17 @@ export class LinkService {
 			);
 			return null;
 		}
-		return { serverLink };
+		return { serverLink, serverLinkId };
 	}
 	async getServerLinkForContext(platform, guildId) {
 		const fieldName = getGuildFieldName(platform);
-		return this.serverLinks.findOne({ [fieldName]: { $eq: guildId } });
+		const sanitizedGuildId = normalizeRequiredId(guildId);
+		if (!sanitizedGuildId) {
+			return null;
+		}
+		return this.serverLinks.findOne({
+			[fieldName]: { $eq: sanitizedGuildId },
+		});
 	}
 	async findLinkedChannelId(
 		serverLinkId,
@@ -735,6 +810,11 @@ export class LinkService {
 		targetPlatform,
 	) {
 		if (!sourceChannelId) {
+			return null;
+		}
+		const sanitizedServerLinkId = sanitizeMongoObjectId(serverLinkId);
+		const sanitizedSourceChannelId = normalizeRequiredId(sourceChannelId);
+		if (!sanitizedServerLinkId || !sanitizedSourceChannelId) {
 			return null;
 		}
 		const sourceField =
@@ -746,8 +826,8 @@ export class LinkService {
 				? "discordChannelId"
 				: "fluxerChannelId";
 		const link = await this.channelLinks.findOne({
-			serverLinkId: { $eq: serverLinkId },
-			[sourceField]: { $eq: sourceChannelId },
+			serverLinkId: { $eq: sanitizedServerLinkId },
+			[sourceField]: { $eq: sanitizedSourceChannelId },
 		});
 		return link?.[targetField] ?? null;
 	}
