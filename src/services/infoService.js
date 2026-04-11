@@ -150,6 +150,9 @@ export class InfoService {
 							`${botPrefix}link-user <priority: discord|fluxer> <discord-user-id> <fluxer-user-id>`,
 						),
 						"`priority` is the server to trust for nickname and role membership sync.",
+						"",
+						formatInlineCode(`${botPrefix}link-me [code]`),
+						"Starts or completes your own user link. No administrator permission is required.",
 					].join("\n"),
 				},
 				{

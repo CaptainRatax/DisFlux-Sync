@@ -728,6 +728,20 @@ export class FluxerPlatform extends EventEmitter {
 			body: JSON.stringify(baseBody),
 		});
 	}
+	async sendDirectMessage(userId, payload) {
+		const channel = await this.request("/users/@me/channels", {
+			method: "POST",
+			body: JSON.stringify({ recipient_id: userId }),
+		});
+		if (!channel?.id) {
+			return false;
+		}
+		const message = await this.sendGuildMessage(
+			channel.id,
+			normalizeReplyPayload(payload),
+		);
+		return Boolean(message);
+	}
 	async editGuildMessage(channelId, messageId, payload) {
 		return this.request(`/channels/${channelId}/messages/${messageId}`, {
 			method: "PATCH",

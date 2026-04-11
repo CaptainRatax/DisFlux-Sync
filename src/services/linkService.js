@@ -3,10 +3,18 @@
 // Licensed under the GNU Affero General Public License v3.0 or later
 // See the LICENSE file for details.
 
+import { createHash } from "node:crypto";
+
+import {
+	generateSetupCode,
+	formatSetupCode,
+} from "../utils/setupCode.js";
 import {
 	sanitizeMongoObjectId,
 	sanitizePlatformId,
+	sanitizeSetupCode,
 } from "../utils/sanitize.js";
+import { formatInlineCode } from "../utils/prefix.js";
 function normalizeId(value) {
 	if (typeof value !== "string" && typeof value !== "number") {
 		return null;
@@ -46,12 +54,33 @@ function normalizeBooleanOption(value) {
 	}
 	return null;
 }
+function hashSetupCode(code) {
+	return createHash("sha256").update(String(code), "utf8").digest("hex");
+}
 function getGuildFieldName(platform) {
 	if (platform === "discord") {
 		return "discordGuildId";
 	}
 	if (platform === "fluxer") {
 		return "fluxerGuildId";
+	}
+	throw new Error(`Unsupported platform: ${platform}`);
+}
+function getOtherPlatform(platform) {
+	if (platform === "discord") {
+		return "fluxer";
+	}
+	if (platform === "fluxer") {
+		return "discord";
+	}
+	throw new Error(`Unsupported platform: ${platform}`);
+}
+function getGuildIdForPlatform(serverLink, platform) {
+	if (platform === "discord") {
+		return serverLink.discordGuildId;
+	}
+	if (platform === "fluxer") {
+		return serverLink.fluxerGuildId;
 	}
 	throw new Error(`Unsupported platform: ${platform}`);
 }
@@ -185,15 +214,25 @@ function formatChannelMetadataSummaryLines(summary) {
 }
 
 export class LinkService {
-	constructor({ mongo, platforms, botPrefix, syncService = null }) {
+	constructor({
+		mongo,
+		platforms,
+		botPrefix,
+		syncService = null,
+		userLinkCodeLength = 10,
+		userLinkCodeTtlMinutes = 15,
+	}) {
 		this.serverLinks = mongo.collection("server_links");
 		this.channelLinks = mongo.collection("channel_links");
 		this.roleLinks = mongo.collection("role_links");
 		this.userLinks = mongo.collection("user_links");
 		this.messageLinks = mongo.collection("message_links");
+		this.pendingUserLinks = mongo.collection("pending_user_links");
 		this.platforms = platforms;
 		this.botPrefix = botPrefix;
 		this.syncService = syncService;
+		this.userLinkCodeLength = Math.max(10, userLinkCodeLength);
+		this.userLinkCodeTtlMinutes = userLinkCodeTtlMinutes;
 	}
 	getBotPrefix(context) {
 		return context.botPrefix ?? this.botPrefix;
@@ -713,6 +752,318 @@ export class LinkService {
 			].join("\n"),
 		);
 	}
+	async handleLinkMe(context, codeRaw) {
+		const hasCode =
+			codeRaw !== undefined &&
+			codeRaw !== null &&
+			String(codeRaw).trim() !== "";
+
+		if (!hasCode) {
+			await this.handleStartLinkMe(context);
+			return;
+		}
+
+		const code = sanitizeSetupCode(codeRaw, this.userLinkCodeLength);
+		if (!code) {
+			await context.reply(
+				`Usage: ${this.getBotPrefix(context)}link-me [code]`,
+			);
+			return;
+		}
+
+		await this.handleFinishLinkMe(context, code);
+	}
+	async handleStartLinkMe(context) {
+		const base = await this.requireLinkedMemberContext(context);
+		if (!base) {
+			return;
+		}
+
+		const sourcePlatform = context.platform;
+		const targetPlatform = getOtherPlatform(sourcePlatform);
+		const sourceGuildId = getGuildIdForPlatform(
+			base.serverLink,
+			sourcePlatform,
+		);
+		const targetGuildId = getGuildIdForPlatform(
+			base.serverLink,
+			targetPlatform,
+		);
+		const sourceUserId = normalizeRequiredId(context.userId);
+
+		if (!sourceGuildId || !targetGuildId || !sourceUserId) {
+			await context.reply("This server link or user ID is invalid.");
+			return;
+		}
+
+		if (
+			sourcePlatform === "fluxer" &&
+			(await this.platforms.fluxer.isGuildOwner(
+				sourceGuildId,
+				sourceUserId,
+			))
+		) {
+			await context.reply(
+				"Fluxer does not allow anyone to manage the server owner, so the Fluxer owner's data cannot be synchronized. No user link code was created.",
+			);
+			return;
+		}
+
+		const sourceUserField = getUserFieldName(sourcePlatform);
+		const existingSourceSide = await this.userLinks.findOne({
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
+			[sourceUserField]: { $eq: sourceUserId },
+		});
+		if (existingSourceSide) {
+			await context.reply(
+				`Your ${formatPlatformLabel(sourcePlatform)} account is already linked for this server pair.`,
+			);
+			return;
+		}
+
+		const sourceClient = this.platforms[sourcePlatform];
+		if (typeof sourceClient.sendDirectMessage !== "function") {
+			await context.reply(
+				"I cannot send direct messages on this platform, so no link code was created.",
+			);
+			return;
+		}
+
+		await this.pendingUserLinks.deleteMany({
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
+			sourcePlatform: { $eq: sourcePlatform },
+			sourceUserId: { $eq: sourceUserId },
+		});
+
+		const code = await this.createUniqueUserLinkCode();
+		const formattedCode = formatSetupCode(code);
+		const now = new Date();
+		const expiresAt = new Date(
+			now.getTime() + this.userLinkCodeTtlMinutes * 60 * 1000,
+		);
+		const pendingUserLink = {
+			codeHash: hashSetupCode(code),
+			serverLinkId: base.serverLinkId,
+			discordGuildId: base.serverLink.discordGuildId,
+			fluxerGuildId: base.serverLink.fluxerGuildId,
+			sourcePlatform,
+			sourceGuildId,
+			sourceUserId,
+			targetPlatform,
+			targetGuildId,
+			priority: sourcePlatform,
+			createdAt: now,
+			expiresAt,
+		};
+
+		let insertResult = null;
+		try {
+			insertResult =
+				await this.pendingUserLinks.insertOne(pendingUserLink);
+		} catch (error) {
+			if (error?.code === 11000) {
+				await context.reply(
+					"A user link code is already pending for you. Try again in a moment.",
+				);
+				return;
+			}
+			throw error;
+		}
+
+		let dmSent = false;
+		try {
+			dmSent = await sourceClient.sendDirectMessage(
+				sourceUserId,
+				[
+					`Your DisFlux Sync user link code is: \`${formattedCode}\``,
+					`Run ${formatInlineCode(`${this.getBotPrefix(context)}link-me ${formattedCode}`)} inside the linked ${formatPlatformLabel(targetPlatform)} server.`,
+					`This code expires in ${this.userLinkCodeTtlMinutes} minutes and can only be used once.`,
+					"Do not share it with anyone.",
+				].join("\n"),
+			);
+		} catch {
+			dmSent = false;
+		}
+
+		if (!dmSent) {
+			await this.pendingUserLinks.deleteOne({
+				_id: insertResult.insertedId,
+			});
+			await context.reply(
+				"I could not send you a DM, so no link code was kept. Enable DMs from this server and try again.",
+			);
+			return;
+		}
+
+		await context.reply(
+			[
+				"I sent you a DM with your user link code.",
+				`Run ${formatInlineCode(`${this.getBotPrefix(context)}link-me <code>`)} inside the linked ${formatPlatformLabel(targetPlatform)} server to finish linking your user.`,
+				`The code expires in ${this.userLinkCodeTtlMinutes} minutes and can only be used once.`,
+			].join("\n"),
+		);
+	}
+	async handleFinishLinkMe(context, code) {
+		const pending = await this.consumePendingUserLinkCode(code);
+		if (!pending) {
+			await context.reply("That user link code is invalid or has expired.");
+			return;
+		}
+
+		if (!context.guildId) {
+			await context.reply(
+				"This command can only be used inside a server. The user link code was discarded.",
+			);
+			return;
+		}
+
+		const currentGuildId = normalizeRequiredId(context.guildId);
+		const currentUserId = normalizeRequiredId(context.userId);
+		if (!currentGuildId || !currentUserId) {
+			await context.reply(
+				"This server or user ID is invalid. The user link code was discarded.",
+			);
+			return;
+		}
+
+		if (context.platform !== pending.targetPlatform) {
+			await context.reply(
+				`This user link code must be completed from ${formatPlatformLabel(pending.targetPlatform)}. The code was discarded.`,
+			);
+			return;
+		}
+
+		if (currentGuildId !== pending.targetGuildId) {
+			await context.reply(
+				"This user link code is not meant for this server. The code was discarded.",
+			);
+			return;
+		}
+
+		const serverLink = await this.getServerLinkForContext(
+			context.platform,
+			currentGuildId,
+		);
+		const serverLinkId = sanitizeMongoObjectId(serverLink?._id);
+		if (
+			!serverLink ||
+			!serverLinkId ||
+			String(serverLinkId) !== String(pending.serverLinkId)
+		) {
+			await context.reply(
+				"The saved server link is no longer available. The user link code was discarded.",
+			);
+			return;
+		}
+		serverLink._id = serverLinkId;
+
+		const sourceMember = await this.platforms[
+			pending.sourcePlatform
+		].fetchGuildMember(pending.sourceGuildId, pending.sourceUserId);
+		if (!sourceMember) {
+			await context.reply(
+				"The original account is no longer in the linked source server. The user link code was discarded.",
+			);
+			return;
+		}
+
+		const targetMember = await this.platforms[
+			context.platform
+		].fetchGuildMember(currentGuildId, currentUserId);
+		if (!targetMember) {
+			await context.reply(
+				"I could not verify your account in this server. The user link code was discarded.",
+			);
+			return;
+		}
+
+		const discordUserId =
+			pending.sourcePlatform === "discord"
+				? pending.sourceUserId
+				: currentUserId;
+		const fluxerUserId =
+			pending.sourcePlatform === "fluxer"
+				? pending.sourceUserId
+				: currentUserId;
+
+		if (!discordUserId || !fluxerUserId) {
+			await context.reply(
+				"The user link code contains invalid user IDs and was discarded.",
+			);
+			return;
+		}
+
+		const fluxerUserIsOwner = await this.platforms.fluxer.isGuildOwner(
+			serverLink.fluxerGuildId,
+			fluxerUserId,
+		);
+		if (fluxerUserIsOwner) {
+			await context.reply(
+				"Fluxer does not allow anyone to manage the server owner, so that Fluxer owner's data cannot be synchronized. The user link code was discarded.",
+			);
+			return;
+		}
+
+		const serverLinkFilter = getServerLinkIdQuery(serverLinkId);
+		const existingDiscordSide = await this.userLinks.findOne({
+			serverLinkId: serverLinkFilter,
+			discordUserId: { $eq: discordUserId },
+		});
+		const existingFluxerSide = await this.userLinks.findOne({
+			serverLinkId: serverLinkFilter,
+			fluxerUserId: { $eq: fluxerUserId },
+		});
+		if (existingDiscordSide || existingFluxerSide) {
+			const sameLink =
+				existingDiscordSide &&
+				existingFluxerSide &&
+				String(existingDiscordSide._id) ===
+					String(existingFluxerSide._id) &&
+				existingDiscordSide.discordUserId === discordUserId &&
+				existingDiscordSide.fluxerUserId === fluxerUserId;
+			await context.reply(
+				sameLink
+					? "Those accounts are already linked. The user link code was discarded."
+					: "One of those accounts is already linked to a different account. The user link code was discarded.",
+			);
+			return;
+		}
+
+		const userLink = {
+			serverLinkId,
+			discordUserId,
+			fluxerUserId,
+			priority: pending.priority,
+			createdAt: new Date(),
+		};
+
+		try {
+			const result = await this.userLinks.insertOne(userLink);
+			userLink._id = result.insertedId;
+		} catch (error) {
+			if (error?.code === 11000) {
+				await context.reply(
+					"One of those accounts was linked before I could save this link. The user link code was discarded.",
+				);
+				return;
+			}
+			throw error;
+		}
+
+		const syncResult = this.syncService
+			? await this.syncService.syncLinkedUser(serverLink, userLink)
+			: null;
+
+		await context.reply(
+			[
+				"User link created successfully.",
+				`Priority: \`${pending.priority}\``,
+				`Discord user ID: \`${discordUserId}\``,
+				`Fluxer user ID: \`${fluxerUserId}\``,
+				...formatUserSyncResultLines(syncResult),
+			].join("\n"),
+		);
+	}
 	async handleSyncUser(context, platformRaw, userRaw) {
 		const base = await this.requireLinkedAdminContext(context);
 		if (!base) {
@@ -978,6 +1329,76 @@ export class LinkService {
 				`Fluxer user ID: \`${link.fluxerUserId}\``,
 			].join("\n"),
 		);
+	}
+	async requireLinkedMemberContext(context) {
+		if (!context.guildId) {
+			await context.reply(
+				"This command can only be used inside a server.",
+			);
+			return null;
+		}
+		const serverLink = await this.getServerLinkForContext(
+			context.platform,
+			context.guildId,
+		);
+		if (!serverLink) {
+			await context.reply(
+				"This server is not linked yet. Complete the setup first.",
+			);
+			return null;
+		}
+		const serverLinkId = sanitizeMongoObjectId(serverLink._id);
+		if (!serverLinkId) {
+			await context.reply("The saved server link is invalid.");
+			return null;
+		}
+		serverLink._id = serverLinkId;
+
+		const guildId = normalizeRequiredId(context.guildId);
+		const userId = normalizeRequiredId(context.userId);
+		if (!guildId || !userId) {
+			await context.reply("This server or user ID is invalid.");
+			return null;
+		}
+
+		const member = await this.platforms[
+			context.platform
+		].fetchGuildMember(guildId, userId);
+		if (!member) {
+			await context.reply(
+				"I could not verify your account in this server.",
+			);
+			return null;
+		}
+
+		return { serverLink, serverLinkId };
+	}
+	async consumePendingUserLinkCode(code) {
+		const result = await this.pendingUserLinks.findOneAndDelete({
+			codeHash: { $eq: hashSetupCode(code) },
+			expiresAt: { $gt: new Date() },
+		});
+		return result;
+	}
+	async createUniqueUserLinkCode() {
+		for (let attempt = 0; attempt < 10; attempt += 1) {
+			const code = sanitizeSetupCode(
+				generateSetupCode(this.userLinkCodeLength),
+				this.userLinkCodeLength,
+			);
+			if (!code) {
+				continue;
+			}
+			const existing = await this.pendingUserLinks.findOne({
+				codeHash: { $eq: hashSetupCode(code) },
+			});
+
+			if (!existing) {
+				return code;
+			}
+		}
+
+		throw new Error("Failed to generate a unique user link code.");
 	}
 	async requireLinkedAdminContext(context) {
 		if (!context.guildId) {

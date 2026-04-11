@@ -1,6 +1,6 @@
 {
   "name": "DisFlux-Sync",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "DisFlux Sync is a bridge bot that synchronizes Discord servers and Fluxer servers in real time.",
   "type": "module",
   "main": "src/index.js",
