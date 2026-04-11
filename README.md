@@ -189,16 +189,16 @@ You can also start the flow from Fluxer and finish it in Discord.
 ### 2. Link channels
 
 ```text
-.link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>
+.link-channel <priority: discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <sync-bots: yes|no> <sync-webhooks: yes|no>
 ```
 
 Arguments:
 
-- 1st argument: priority, either `discord` or `fluxer`
-- 2nd argument: Discord channel ID or `auto`
-- 3rd argument: Fluxer channel ID or `auto`
-- 4th argument: whether to sync messages from other bots in that linked channel
-- 5th argument: whether to sync webhook messages in that linked channel
+- `priority`: server to trust when channel data needs to be overwritten, either `discord` or `fluxer`
+- `discord-channel-id`: Discord channel ID or `auto`
+- `fluxer-channel-id`: Fluxer channel ID or `auto`
+- `sync-bots`: whether to sync messages from other bots in that linked channel
+- `sync-webhooks`: whether to sync webhook messages in that linked channel
 
 Examples:
 
@@ -217,8 +217,10 @@ Important:
 ### 3. Link roles
 
 ```text
-.link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>
+.link-role <priority: discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>
 ```
+
+`priority` is the server to trust when role metadata needs to be overwritten.
 
 Examples:
 
@@ -230,8 +232,10 @@ Examples:
 ### 4. Link users
 
 ```text
-.link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>
+.link-user <priority: discord|fluxer> <discord-user-id> <fluxer-user-id>
 ```
+
+`priority` is the server to trust when nickname or linked role membership needs to be overwritten.
 
 Example:
 
@@ -242,10 +246,12 @@ Example:
 ### 5. Unlink channels, roles, or users
 
 ```text
-.unlink-channel <discord|fluxer> <channel-id>
-.unlink-role <discord|fluxer> <role-id>
-.unlink-user <discord|fluxer> <user-id>
+.unlink-channel <platform: discord|fluxer> <channel-id>
+.unlink-role <platform: discord|fluxer> <role-id>
+.unlink-user <platform: discord|fluxer> <user-id>
 ```
+
+`platform` is the side where the ID belongs.
 
 Examples:
 
@@ -275,37 +281,45 @@ Starts the server linking process from the current server.
 
 Completes the server linking process in the target server.
 
-### `.link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>`
+### `.link-channel <priority: discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <sync-bots: yes|no> <sync-webhooks: yes|no>`
 
-Creates or updates a linked channel pair and defines whether to sync other bot messages and webhook messages.
+Creates or updates a linked channel pair. `priority` is the server to trust, `sync-bots` controls other bot messages, and `sync-webhooks` controls webhook messages.
 
-### `.link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>`
+### `.link-role <priority: discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>`
 
-Creates a role link. One side can be created automatically.
+Creates a role link. `priority` is the server to trust for role metadata. One side can be created automatically.
 
-### `.link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`
+### `.link-user <priority: discord|fluxer> <discord-user-id> <fluxer-user-id>`
 
-Creates a user link.
+Creates a user link. `priority` is the server to trust for nickname and linked role membership sync.
 
-### `.sync-user <discord|fluxer> <user-id>`
+### `.sync-user <platform: discord|fluxer> <user-id>`
 
-Manually resyncs one linked user.
+Manually resyncs one linked user. `platform` is the side where the user ID belongs.
 
 ### `.resync-users`
 
 Manually resyncs all linked users for the current linked server pair.
 
-### `.unlink-channel <discord|fluxer> <channel-id>`
+### `.resync-roles`
 
-Removes a channel link and clears cached message mappings for that channel pair.
+Manually resyncs all linked role metadata from each link's priority server.
 
-### `.unlink-role <discord|fluxer> <role-id>`
+### `.resync-channels`
 
-Removes a role link.
+Manually resyncs all linked channel data and mapped role permission overwrites from each link's priority server.
 
-### `.unlink-user <discord|fluxer> <user-id>`
+### `.unlink-channel <platform: discord|fluxer> <channel-id>`
 
-Removes a user link.
+Removes a channel link and clears cached message mappings for that channel pair. `platform` is the side where the channel ID belongs.
+
+### `.unlink-role <platform: discord|fluxer> <role-id>`
+
+Removes a role link. `platform` is the side where the role ID belongs.
+
+### `.unlink-user <platform: discord|fluxer> <user-id>`
+
+Removes a user link. `platform` is the side where the user ID belongs.
 
 ### `.list-channels [page]`
 

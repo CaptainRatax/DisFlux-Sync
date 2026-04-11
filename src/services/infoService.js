@@ -134,37 +134,41 @@ export class InfoService {
 					].join("\n"),
 				},
 				{
-					name: "Links",
+					name: "Create links",
 					value: [
 						formatInlineCode(
-							`${botPrefix}link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>`,
+							`${botPrefix}link-channel <priority: discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <sync-bots: yes|no> <sync-webhooks: yes|no>`,
 						),
-						"Links a channel pair and sets whether to sync other bot messages and webhook messages.",
+						"`priority` is the server to trust. `sync-bots` mirrors other bots; `sync-webhooks` mirrors webhook messages.",
 						"",
 						formatInlineCode(
-							`${botPrefix}link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>`,
+							`${botPrefix}link-role <priority: discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>`,
 						),
-						"Links a role pair. One side can be `auto`.",
+						"`priority` is the server to trust for role metadata. One side can be `auto`.",
 						"",
 						formatInlineCode(
-							`${botPrefix}link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`,
+							`${botPrefix}link-user <priority: discord|fluxer> <discord-user-id> <fluxer-user-id>`,
 						),
-						"Links a user pair.",
+						"`priority` is the server to trust for nickname and role membership sync.",
+					].join("\n"),
+				},
+				{
+					name: "Remove links",
+					value: [
+						formatInlineCode(
+							`${botPrefix}unlink-channel <platform: discord|fluxer> <channel-id>`,
+						),
+						"`platform` is the side where the channel ID belongs. Cached message mappings are removed too.",
 						"",
 						formatInlineCode(
-							`${botPrefix}unlink-channel <discord|fluxer> <channel-id>`,
+							`${botPrefix}unlink-role <platform: discord|fluxer> <role-id>`,
 						),
-						"Removes a channel link and its cached message mappings.",
+						"`platform` is the side where the role ID belongs.",
 						"",
 						formatInlineCode(
-							`${botPrefix}unlink-role <discord|fluxer> <role-id>`,
+							`${botPrefix}unlink-user <platform: discord|fluxer> <user-id>`,
 						),
-						"Removes a role link.",
-						"",
-						formatInlineCode(
-							`${botPrefix}unlink-user <discord|fluxer> <user-id>`,
-						),
-						"Removes a user link.",
+						"`platform` is the side where the user ID belongs.",
 					].join("\n"),
 				},
 				{
@@ -179,12 +183,18 @@ export class InfoService {
 					name: "Manual sync",
 					value: [
 						formatInlineCode(
-							`${botPrefix}sync-user <discord|fluxer> <user-id>`,
+							`${botPrefix}sync-user <platform: discord|fluxer> <user-id>`,
 						),
-						"Resyncs one linked user.",
+						"Resyncs one linked user. `platform` is the side where the user ID belongs.",
 						"",
 						formatInlineCode(`${botPrefix}resync-users`),
 						"Resyncs all linked users in this server pair.",
+						"",
+						formatInlineCode(`${botPrefix}resync-roles`),
+						"Resyncs all linked role metadata from each link's priority server.",
+						"",
+						formatInlineCode(`${botPrefix}resync-channels`),
+						"Resyncs all linked channel data and role permission overwrites from each link's priority server.",
 					].join("\n"),
 				},
 				{
@@ -196,11 +206,9 @@ export class InfoService {
 					].join("\n"),
 				},
 				{
-					name: "Flags for link-channel",
+					name: "Yes/no values",
 					value: [
-						"4th extra argument: sync other bot messages",
-						"5th extra argument: sync webhook messages",
-						"Accepted values: `yes`, `no`, `true`, `false`, `1`, `0`",
+						"`sync-bots` and `sync-webhooks` accept `yes`, `no`, `true`, `false`, `1`, or `0`.",
 						"",
 						"Messages from DisFlux Sync itself are never mirrored.",
 					].join("\n"),

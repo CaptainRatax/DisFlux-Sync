@@ -154,6 +154,36 @@ function formatUserSyncResultLines(syncResult) {
 		`Role permission skips: \`${membershipSummary.skippedUnmanageableRoles ?? 0}\``,
 	];
 }
+
+function formatRoleMetadataSummaryLines(summary) {
+	return [
+		`Roles checked: \`${summary?.checked ?? 0}\``,
+		`Role metadata differences: \`${summary?.differences ?? 0}\``,
+		`Role metadata changes applied: \`${summary?.changed ?? 0}\``,
+		`Role metadata changes failed: \`${summary?.failed ?? 0}\``,
+		`Unsupported priorities skipped: \`${summary?.skippedUnsupported ?? 0}\``,
+		`Missing source roles skipped: \`${summary?.skippedMissingSource ?? 0}\``,
+		`Missing target roles skipped: \`${summary?.skippedMissingTarget ?? 0}\``,
+		`Unmanageable target roles skipped: \`${summary?.skippedUnmanageable ?? 0}\``,
+	];
+}
+
+function formatChannelMetadataSummaryLines(summary) {
+	return [
+		`Channels checked: \`${summary?.checked ?? 0}\``,
+		`Linked roles used for permission mapping: \`${summary?.roleLinksUsed ?? 0}\``,
+		`Channel data or permission differences: \`${summary?.differences ?? 0}\``,
+		`Channel changes applied: \`${summary?.changed ?? 0}\``,
+		`Channel changes failed: \`${summary?.failed ?? 0}\``,
+		`Unsupported priorities skipped: \`${summary?.skippedUnsupported ?? 0}\``,
+		`Missing channel IDs skipped: \`${summary?.skippedMissingIds ?? 0}\``,
+		`Missing source channels skipped: \`${summary?.skippedMissingSource ?? 0}\``,
+		`Missing target channels skipped: \`${summary?.skippedMissingTarget ?? 0}\``,
+		`Type mismatches skipped: \`${summary?.skippedTypeMismatch ?? 0}\``,
+		`Unmanageable target channels skipped: \`${summary?.skippedUnmanageable ?? 0}\``,
+	];
+}
+
 export class LinkService {
 	constructor({ mongo, platforms, botPrefix, syncService = null }) {
 		this.serverLinks = mongo.collection("server_links");
@@ -189,7 +219,7 @@ export class LinkService {
 			syncWebhookMessages === null
 		) {
 			await context.reply(
-				`Usage: ${this.getBotPrefix(context)}link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>`,
+				`Usage: ${this.getBotPrefix(context)}link-channel <priority: discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <sync-bots: yes|no> <sync-webhooks: yes|no>`,
 			);
 			return;
 		}
@@ -433,7 +463,7 @@ export class LinkService {
 		const priority = normalizePriority(priorityRaw);
 		if (!priority) {
 			await context.reply(
-				`Usage: ${this.getBotPrefix(context)}link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>`,
+				`Usage: ${this.getBotPrefix(context)}link-role <priority: discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>`,
 			);
 			return;
 		}
@@ -601,7 +631,7 @@ export class LinkService {
 		const priority = normalizePriority(priorityRaw);
 		if (!priority) {
 			await context.reply(
-				`Usage: ${this.getBotPrefix(context)}link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`,
+				`Usage: ${this.getBotPrefix(context)}link-user <priority: discord|fluxer> <discord-user-id> <fluxer-user-id>`,
 			);
 			return;
 		}
@@ -609,7 +639,7 @@ export class LinkService {
 		const fluxerUserId = normalizeRequiredId(fluxerUserRaw);
 		if (!discordUserId || !fluxerUserId) {
 			await context.reply(
-				`Usage: ${this.getBotPrefix(context)}link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`,
+				`Usage: ${this.getBotPrefix(context)}link-user <priority: discord|fluxer> <discord-user-id> <fluxer-user-id>`,
 			);
 			return;
 		}
@@ -692,7 +722,7 @@ export class LinkService {
 		const userId = normalizeId(userRaw);
 		if (!platform || !userId) {
 			await context.reply(
-				`Usage: ${this.getBotPrefix(context)}sync-user <discord|fluxer> <user-id>`,
+				`Usage: ${this.getBotPrefix(context)}sync-user <platform: discord|fluxer> <user-id>`,
 			);
 			return;
 		}
@@ -778,6 +808,56 @@ export class LinkService {
 			].join("\n"),
 		);
 	}
+	async handleResyncRoles(context) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		if (!this.syncService) {
+			await context.reply("Sync service is not available.");
+			return;
+		}
+		const summary = await this.syncService.resyncLinkedRoles(
+			base.serverLink,
+		);
+		if (summary.checked === 0) {
+			await context.reply(
+				"There are no linked roles for this server pair.",
+			);
+			return;
+		}
+		await context.reply(
+			[
+				"Role resync completed.",
+				...formatRoleMetadataSummaryLines(summary),
+			].join("\n"),
+		);
+	}
+	async handleResyncChannels(context) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		if (!this.syncService) {
+			await context.reply("Sync service is not available.");
+			return;
+		}
+		const summary = await this.syncService.resyncLinkedChannels(
+			base.serverLink,
+		);
+		if (summary.checked === 0) {
+			await context.reply(
+				"There are no linked channels for this server pair.",
+			);
+			return;
+		}
+		await context.reply(
+			[
+				"Channel resync completed.",
+				...formatChannelMetadataSummaryLines(summary),
+			].join("\n"),
+		);
+	}
 	async handleUnlinkChannel(context, platformRaw, channelRaw) {
 		const base = await this.requireLinkedAdminContext(context);
 		if (!base) {
@@ -787,7 +867,7 @@ export class LinkService {
 		const channelId = normalizeId(channelRaw);
 		if (!platform || !channelId) {
 			await context.reply(
-				`Usage: ${this.getBotPrefix(context)}unlink-channel <discord|fluxer> <channel-id>`,
+				`Usage: ${this.getBotPrefix(context)}unlink-channel <platform: discord|fluxer> <channel-id>`,
 			);
 			return;
 		}
@@ -842,7 +922,7 @@ export class LinkService {
 		const roleId = normalizeId(roleRaw);
 		if (!platform || !roleId) {
 			await context.reply(
-				`Usage: ${this.getBotPrefix(context)}unlink-role <discord|fluxer> <role-id>`,
+				`Usage: ${this.getBotPrefix(context)}unlink-role <platform: discord|fluxer> <role-id>`,
 			);
 			return;
 		}
@@ -875,7 +955,7 @@ export class LinkService {
 		const userId = normalizeId(userRaw);
 		if (!platform || !userId) {
 			await context.reply(
-				`Usage: ${this.getBotPrefix(context)}unlink-user <discord|fluxer> <user-id>`,
+				`Usage: ${this.getBotPrefix(context)}unlink-user <platform: discord|fluxer> <user-id>`,
 			);
 			return;
 		}
