@@ -9,6 +9,7 @@ import {
 	Client,
 	Events,
 	GatewayIntentBits,
+	OverwriteType,
 	Partials,
 	PermissionsBitField,
 	REST,
@@ -73,6 +74,42 @@ function buildMemberSnapshot(member) {
 		nick: member.nickname ?? null,
 		roleIds,
 	};
+}
+function normalizePermissionOverwriteType(type) {
+	return type === "member" || type === OverwriteType.Member
+		? OverwriteType.Member
+		: OverwriteType.Role;
+}
+function buildChannelPermissionOverwrites(channel) {
+	return [...channel.permissionOverwrites.cache.values()].map(
+		(overwrite) => ({
+			id: overwrite.id,
+			type:
+				overwrite.type === OverwriteType.Member ? "member" : "role",
+			allow: overwrite.allow.bitfield.toString(),
+			deny: overwrite.deny.bitfield.toString(),
+		}),
+	);
+}
+function buildDiscordPermissionOverwrites(overwrites = []) {
+	return overwrites.map((overwrite) => ({
+		id: overwrite.id,
+		type: normalizePermissionOverwriteType(overwrite.type),
+		allow: new PermissionsBitField(BigInt(overwrite.allow ?? "0")),
+		deny: new PermissionsBitField(BigInt(overwrite.deny ?? "0")),
+	}));
+}
+function setDefined(target, key, value) {
+	if (value !== undefined) {
+		target[key] = value;
+	}
+}
+function isChannelManageable(channel) {
+	try {
+		return Boolean(channel?.manageable);
+	} catch {
+		return false;
+	}
 }
 export class DiscordPlatform extends EventEmitter {
 	constructor({ token, clientId }) {
@@ -283,6 +320,23 @@ export class DiscordPlatform extends EventEmitter {
 				roleId: newRole.id,
 			});
 		});
+		this.client.on(Events.ChannelUpdate, async (_oldChannel, newChannel) => {
+			if (!newChannel?.guildId) {
+				return;
+			}
+			if (
+				!(await this.isSupportedGuildChannelType(newChannel).catch(
+					() => false,
+				))
+			) {
+				return;
+			}
+			this.emit("channelUpdate", {
+				platform: "discord",
+				guildId: newChannel.guildId,
+				channelId: newChannel.id,
+			});
+		});
 		this.client.on(
 			Events.GuildMemberUpdate,
 			async (_oldMember, newMember) => {
@@ -449,6 +503,9 @@ export class DiscordPlatform extends EventEmitter {
 				topic: channel.topic ?? null,
 				nsfw: channel.nsfw ?? false,
 				parentId: channel.parentId ?? null,
+				rateLimitPerUser: channel.rateLimitPerUser ?? 0,
+				permissionOverwrites:
+					buildChannelPermissionOverwrites(channel),
 			};
 		}
 		if (channel.type === ChannelType.GuildVoice) {
@@ -458,10 +515,18 @@ export class DiscordPlatform extends EventEmitter {
 				bitrate: channel.bitrate ?? null,
 				userLimit: channel.userLimit ?? 0,
 				parentId: channel.parentId ?? null,
+				permissionOverwrites:
+					buildChannelPermissionOverwrites(channel),
 			};
 		}
 		if (channel.type === ChannelType.GuildCategory) {
-			return { kind: "category", name: channel.name };
+			return {
+				kind: "category",
+				name: channel.name,
+				parentId: null,
+				permissionOverwrites:
+					buildChannelPermissionOverwrites(channel),
+			};
 		}
 		return null;
 	}
@@ -471,31 +536,95 @@ export class DiscordPlatform extends EventEmitter {
 			return null;
 		}
 		try {
+			const permissionOverwrites = buildDiscordPermissionOverwrites(
+				template.permissionOverwrites ?? [],
+			);
+
 			if (template.kind === "text") {
-				return await guild.channels.create({
+				const options = {
 					name: template.name,
 					type: ChannelType.GuildText,
 					topic: template.topic ?? undefined,
 					nsfw: template.nsfw ?? false,
 					parent: template.parentId ?? undefined,
-				});
+					rateLimitPerUser: template.rateLimitPerUser ?? 0,
+				};
+				setDefined(
+					options,
+					"permissionOverwrites",
+					permissionOverwrites.length > 0
+						? permissionOverwrites
+						: undefined,
+				);
+				return await guild.channels.create(options);
 			}
 			if (template.kind === "voice") {
-				return await guild.channels.create({
+				const options = {
 					name: template.name,
 					type: ChannelType.GuildVoice,
 					bitrate: template.bitrate ?? undefined,
 					userLimit: template.userLimit ?? 0,
 					parent: template.parentId ?? undefined,
-				});
+				};
+				setDefined(
+					options,
+					"permissionOverwrites",
+					permissionOverwrites.length > 0
+						? permissionOverwrites
+						: undefined,
+				);
+				return await guild.channels.create(options);
 			}
 			if (template.kind === "category") {
-				return await guild.channels.create({
+				const options = {
 					name: template.name,
 					type: ChannelType.GuildCategory,
-				});
+				};
+				setDefined(
+					options,
+					"permissionOverwrites",
+					permissionOverwrites.length > 0
+						? permissionOverwrites
+						: undefined,
+				);
+				return await guild.channels.create(options);
 			}
 			return null;
+		} catch {
+			return null;
+		}
+	}
+	async updateGuildChannelFromTemplate(guildId, channelId, template) {
+		const channel = await this.fetchGuildChannel(guildId, channelId);
+		if (!isChannelManageable(channel)) {
+			return null;
+		}
+		try {
+			const options = {
+				name: template.name,
+				permissionOverwrites: buildDiscordPermissionOverwrites(
+					template.permissionOverwrites ?? [],
+				),
+			};
+
+			setDefined(options, "parent", template.parentId);
+
+			if (template.kind === "text") {
+				setDefined(options, "topic", template.topic ?? null);
+				setDefined(options, "nsfw", template.nsfw ?? false);
+				setDefined(
+					options,
+					"rateLimitPerUser",
+					template.rateLimitPerUser ?? 0,
+				);
+			}
+
+			if (template.kind === "voice") {
+				setDefined(options, "bitrate", template.bitrate ?? undefined);
+				setDefined(options, "userLimit", template.userLimit ?? 0);
+			}
+
+			return await channel.edit(options);
 		} catch {
 			return null;
 		}
@@ -572,6 +701,10 @@ export class DiscordPlatform extends EventEmitter {
 			return false;
 		}
 		return role.editable;
+	}
+	async canManageChannel(guildId, channelId) {
+		const channel = await this.fetchGuildChannel(guildId, channelId);
+		return isChannelManageable(channel);
 	}
 	async fetchGuildMember(guildId, userId) {
 		const guild = await this.fetchGuild(guildId);
