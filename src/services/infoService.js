@@ -4,6 +4,7 @@
 // See the LICENSE file for details.
 
 import { sanitizeMongoObjectId } from "../utils/sanitize.js";
+import { formatInlineCode } from "../utils/prefix.js";
 
 function getGuildFieldName(platform) {
 	if (platform === "discord") {
@@ -102,59 +103,96 @@ export class InfoService {
 		this.botPrefix = botPrefix;
 		this.itemsPerPage = 10;
 	}
+	getBotPrefix(context) {
+		return context.botPrefix ?? this.botPrefix;
+	}
 	async handleHelp(context) {
+		const botPrefix = this.getBotPrefix(context);
 		const embed = buildEmbed({
 			title: "DisFlux Sync - Help",
 			description: "Synchronizes linked Discord and Fluxer servers.",
 			fields: [
+				...(context.platform === "discord"
+					? [
+							{
+								name: "Discord commands",
+								value: [
+									"Slash commands and prefix commands both work here.",
+									"Examples: `/setup` and `/link-channel`.",
+								].join("\n"),
+							},
+						]
+					: []),
 				{
 					name: "Setup",
 					value: [
-						`\`${this.botPrefix}setup <target-guild-id>\``,
+						formatInlineCode(`${botPrefix}setup <target-guild-id>`),
 						"Starts the setup flow from the current server.",
 						"",
-						`\`${this.botPrefix}finish-setup <code>\``,
+						formatInlineCode(`${botPrefix}finish-setup <code>`),
 						"Completes the setup flow in the target linked server.",
 					].join("\n"),
 				},
 				{
 					name: "Links",
 					value: [
-						`\`${this.botPrefix}link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>\``,
+						formatInlineCode(
+							`${botPrefix}link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>`,
+						),
 						"Links a channel pair and sets whether to sync other bot messages and webhook messages.",
 						"",
-						`\`${this.botPrefix}link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>\``,
+						formatInlineCode(
+							`${botPrefix}link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>`,
+						),
 						"Links a role pair. One side can be `auto`.",
 						"",
-						`\`${this.botPrefix}link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>\``,
+						formatInlineCode(
+							`${botPrefix}link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`,
+						),
 						"Links a user pair.",
 						"",
-						`\`${this.botPrefix}unlink-channel <discord|fluxer> <channel-id>\``,
+						formatInlineCode(
+							`${botPrefix}unlink-channel <discord|fluxer> <channel-id>`,
+						),
 						"Removes a channel link and its cached message mappings.",
 						"",
-						`\`${this.botPrefix}unlink-role <discord|fluxer> <role-id>\``,
+						formatInlineCode(
+							`${botPrefix}unlink-role <discord|fluxer> <role-id>`,
+						),
 						"Removes a role link.",
 						"",
-						`\`${this.botPrefix}unlink-user <discord|fluxer> <user-id>\``,
+						formatInlineCode(
+							`${botPrefix}unlink-user <discord|fluxer> <user-id>`,
+						),
 						"Removes a user link.",
 					].join("\n"),
 				},
 				{
 					name: "Lists",
 					value: [
-						`\`${this.botPrefix}list-channels [page]\``,
-						`\`${this.botPrefix}list-roles [page]\``,
-						`\`${this.botPrefix}list-users [page]\``,
+						formatInlineCode(`${botPrefix}list-channels [page]`),
+						formatInlineCode(`${botPrefix}list-roles [page]`),
+						formatInlineCode(`${botPrefix}list-users [page]`),
 					].join("\n"),
 				},
 				{
 					name: "Manual sync",
 					value: [
-						`\`${this.botPrefix}sync-user <discord|fluxer> <user-id>\``,
+						formatInlineCode(
+							`${botPrefix}sync-user <discord|fluxer> <user-id>`,
+						),
 						"Resyncs one linked user.",
 						"",
-						`\`${this.botPrefix}resync-users\``,
+						formatInlineCode(`${botPrefix}resync-users`),
 						"Resyncs all linked users in this server pair.",
+					].join("\n"),
+				},
+				{
+					name: "Prefix",
+					value: [
+						formatInlineCode(`${botPrefix}set-prefix <prefix>`),
+						"Changes the shared prefix for the linked Discord and Fluxer servers.",
+						"The prefix must be exactly one visible character.",
 					].join("\n"),
 				},
 				{

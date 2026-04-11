@@ -16,7 +16,7 @@ Use the official hosted bots if you just want to set up synchronization for your
 
 ### Discord Bot Invite
 
-[Invite DisFlux Sync to Discord](https://discord.com/oauth2/authorize?client_id=1491578639018496030&permissions=8&integration_type=0&scope=bot)
+[Invite DisFlux Sync to Discord](https://discord.com/oauth2/authorize?client_id=1491578639018496030&permissions=8&integration_type=0&scope=bot+applications.commands)
 
 ### Fluxer Bot Invite
 
@@ -140,7 +140,7 @@ DISCORD_CLIENT_ID=your_discord_application_id
 FLUXER_TOKEN=your_fluxer_bot_token
 FLUXER_API_BASE=https://api.fluxer.app/v1
 
-BOT_PREFIX=!
+BOT_PREFIX=.
 SETUP_CODE_LENGTH=10
 SETUP_CODE_TTL_MINUTES=15
 MESSAGE_LINK_TTL_DAYS=30
@@ -162,6 +162,12 @@ npm start
 
 To stop the bot, press `Ctrl+C`.
 
+## Command Styles
+
+Discord supports both slash commands and prefix commands. For example, `/setup` and `.setup` call the same setup handler, so existing prefix commands continue to work.
+
+Fluxer commands continue to use the configured prefix. After setup, each linked Discord/Fluxer server pair can change the shared prefix with `.set-prefix <prefix>`. The prefix must be exactly one visible character, and changing it from Discord also changes it for the linked Fluxer server, and vice versa.
+
 ## Basic Setup Flow
 
 ### 1. Link the servers
@@ -169,13 +175,13 @@ To stop the bot, press `Ctrl+C`.
 From Discord:
 
 ```text
-!setup <fluxer-server-id>
+.setup <fluxer-server-id>
 ```
 
 Then, in the linked Fluxer server:
 
 ```text
-!finish-setup <code>
+.finish-setup <code>
 ```
 
 You can also start the flow from Fluxer and finish it in Discord.
@@ -183,7 +189,7 @@ You can also start the flow from Fluxer and finish it in Discord.
 ### 2. Link channels
 
 ```text
-!link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>
+.link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>
 ```
 
 Arguments:
@@ -197,9 +203,9 @@ Arguments:
 Examples:
 
 ```text
-!link-channel discord 123456789012345678 auto yes no
-!link-channel fluxer auto 987654321098765432 yes yes
-!link-channel discord 123456789012345678 987654321098765432 no no
+.link-channel discord 123456789012345678 auto yes no
+.link-channel fluxer auto 987654321098765432 yes yes
+.link-channel discord 123456789012345678 987654321098765432 no no
 ```
 
 Important:
@@ -211,99 +217,105 @@ Important:
 ### 3. Link roles
 
 ```text
-!link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>
+.link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>
 ```
 
 Examples:
 
 ```text
-!link-role discord 123456789012345678 auto
-!link-role fluxer auto 987654321098765432
+.link-role discord 123456789012345678 auto
+.link-role fluxer auto 987654321098765432
 ```
 
 ### 4. Link users
 
 ```text
-!link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>
+.link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>
 ```
 
 Example:
 
 ```text
-!link-user discord 123456789012345678 987654321098765432
+.link-user discord 123456789012345678 987654321098765432
 ```
 
 ### 5. Unlink channels, roles, or users
 
 ```text
-!unlink-channel <discord|fluxer> <channel-id>
-!unlink-role <discord|fluxer> <role-id>
-!unlink-user <discord|fluxer> <user-id>
+.unlink-channel <discord|fluxer> <channel-id>
+.unlink-role <discord|fluxer> <role-id>
+.unlink-user <discord|fluxer> <user-id>
 ```
 
 Examples:
 
 ```text
-!unlink-channel discord 123456789012345678
-!unlink-role fluxer 987654321098765432
-!unlink-user discord 123456789012345678
+.unlink-channel discord 123456789012345678
+.unlink-role fluxer 987654321098765432
+.unlink-user discord 123456789012345678
 ```
 
 ## Available Commands
 
-### `!help`
+On Discord, the commands below are also available as slash commands with the same names and guided options, for example `/link-channel`.
+
+### `.help`
 
 Shows the help menu in an embed.
 
-### `!setup <target-guild-id>`
+### `.set-prefix <prefix>`
+
+Changes the shared prefix for the linked Discord and Fluxer servers. The prefix must be exactly one visible character.
+
+### `.setup <target-guild-id>`
 
 Starts the server linking process from the current server.
 
-### `!finish-setup <code>`
+### `.finish-setup <code>`
 
 Completes the server linking process in the target server.
 
-### `!link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>`
+### `.link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>`
 
 Creates or updates a linked channel pair and defines whether to sync other bot messages and webhook messages.
 
-### `!link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>`
+### `.link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>`
 
 Creates a role link. One side can be created automatically.
 
-### `!link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`
+### `.link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`
 
 Creates a user link.
 
-### `!sync-user <discord|fluxer> <user-id>`
+### `.sync-user <discord|fluxer> <user-id>`
 
 Manually resyncs one linked user.
 
-### `!resync-users`
+### `.resync-users`
 
 Manually resyncs all linked users for the current linked server pair.
 
-### `!unlink-channel <discord|fluxer> <channel-id>`
+### `.unlink-channel <discord|fluxer> <channel-id>`
 
 Removes a channel link and clears cached message mappings for that channel pair.
 
-### `!unlink-role <discord|fluxer> <role-id>`
+### `.unlink-role <discord|fluxer> <role-id>`
 
 Removes a role link.
 
-### `!unlink-user <discord|fluxer> <user-id>`
+### `.unlink-user <discord|fluxer> <user-id>`
 
 Removes a user link.
 
-### `!list-channels [page]`
+### `.list-channels [page]`
 
 Lists linked channels in embeds with pagination.
 
-### `!list-roles [page]`
+### `.list-roles [page]`
 
 Lists linked roles in embeds with pagination.
 
-### `!list-users [page]`
+### `.list-users [page]`
 
 Lists linked users in embeds with pagination.
 

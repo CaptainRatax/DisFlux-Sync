@@ -5,13 +5,174 @@
 
 import { logger } from "./logger.js";
 import { parsePrefixedCommand } from "../utils/parseCommand.js";
-export function bindCommandDispatcher({
-	platformClient,
-	prefix,
+
+async function applyContextPrefix(context, prefixService) {
+	try {
+		const prefix = await prefixService.getPrefixForContext(context);
+		context.botPrefix = prefix;
+		return prefix;
+	} catch (error) {
+		logger.error("Failed to resolve command prefix", {
+			platform: context.platform,
+			guildId: context.guildId,
+			error: error.message,
+		});
+		context.botPrefix = prefixService.defaultPrefix;
+		return prefixService.defaultPrefix;
+	}
+}
+
+async function executeParsedCommand({
+	context,
+	parsed,
 	setupService,
 	linkService,
 	infoService,
+	prefixService,
 }) {
+	if (parsed.name === "set-prefix" || parsed.name === "setprefix") {
+		await prefixService.handleSetPrefix(context, parsed.args[0]);
+		return true;
+	}
+	if (parsed.name === "setup") {
+		await setupService.handleSetup(context, parsed.args[0]);
+		return true;
+	}
+	if (parsed.name === "finish-setup" || parsed.name === "finishsetup") {
+		await setupService.handleFinishSetup(context, parsed.args[0]);
+		return true;
+	}
+	if (parsed.name === "link-channel" || parsed.name === "linkchannel") {
+		await linkService.handleLinkChannel(
+			context,
+			parsed.args[0],
+			parsed.args[1],
+			parsed.args[2],
+			parsed.args[3],
+			parsed.args[4],
+		);
+		return true;
+	}
+	if (parsed.name === "link-role" || parsed.name === "linkrole") {
+		await linkService.handleLinkRole(
+			context,
+			parsed.args[0],
+			parsed.args[1],
+			parsed.args[2],
+		);
+		return true;
+	}
+	if (parsed.name === "link-user" || parsed.name === "linkuser") {
+		await linkService.handleLinkUser(
+			context,
+			parsed.args[0],
+			parsed.args[1],
+			parsed.args[2],
+		);
+		return true;
+	}
+	if (parsed.name === "sync-user" || parsed.name === "syncuser") {
+		await linkService.handleSyncUser(
+			context,
+			parsed.args[0],
+			parsed.args[1],
+		);
+		return true;
+	}
+	if (parsed.name === "resync-users" || parsed.name === "resyncusers") {
+		await linkService.handleResyncUsers(context);
+		return true;
+	}
+	if (parsed.name === "unlink-channel" || parsed.name === "unlinkchannel") {
+		await linkService.handleUnlinkChannel(
+			context,
+			parsed.args[0],
+			parsed.args[1],
+		);
+		return true;
+	}
+	if (parsed.name === "unlink-role" || parsed.name === "unlinkrole") {
+		await linkService.handleUnlinkRole(
+			context,
+			parsed.args[0],
+			parsed.args[1],
+		);
+		return true;
+	}
+	if (parsed.name === "unlink-user" || parsed.name === "unlinkuser") {
+		await linkService.handleUnlinkUser(
+			context,
+			parsed.args[0],
+			parsed.args[1],
+		);
+		return true;
+	}
+	if (parsed.name === "list-channels" || parsed.name === "listchannels") {
+		await infoService.handleListChannels(context, parsed.args[0]);
+		return true;
+	}
+	if (parsed.name === "list-roles" || parsed.name === "listroles") {
+		await infoService.handleListRoles(context, parsed.args[0]);
+		return true;
+	}
+	if (parsed.name === "list-users" || parsed.name === "listusers") {
+		await infoService.handleListUsers(context, parsed.args[0]);
+		return true;
+	}
+	if (parsed.name === "help") {
+		await infoService.handleHelp(context);
+		return true;
+	}
+
+	return false;
+}
+
+async function runParsedCommand({
+	context,
+	parsed,
+	setupService,
+	linkService,
+	infoService,
+	prefixService,
+	replyOnUnknown = false,
+}) {
+	context.commandName = parsed.name;
+	try {
+		const handled = await executeParsedCommand({
+			context,
+			parsed,
+			setupService,
+			linkService,
+			infoService,
+			prefixService,
+		});
+		if (!handled && replyOnUnknown) {
+			await context.reply("Unknown command.");
+		}
+	} catch (error) {
+		logger.error("Command execution failed", {
+			platform: context.platform,
+			guildId: context.guildId,
+			userId: context.userId,
+			commandName: parsed.name,
+			error: error.message,
+			stack: error.stack,
+		});
+		await context.reply(
+			"Something went wrong while processing that command.",
+		);
+	}
+}
+
+export function bindCommandDispatcher({
+	platformClient,
+	setupService,
+	linkService,
+	infoService,
+	prefixService,
+}) {
+	const services = { setupService, linkService, infoService, prefixService };
+
 	platformClient.on("message", async (context) => {
 		if (
 			context.isSelfMessage ||
@@ -20,133 +181,29 @@ export function bindCommandDispatcher({
 		) {
 			return;
 		}
+		const prefix = await applyContextPrefix(context, prefixService);
 		const parsed = parsePrefixedCommand(context.content, prefix);
 		if (!parsed) {
 			return;
 		}
-		context.commandName = parsed.name;
-		try {
-			if (parsed.name === "setup") {
-				await setupService.handleSetup(context, parsed.args[0]);
-				return;
-			}
-			if (
-				parsed.name === "finish-setup" ||
-				parsed.name === "finishsetup"
-			) {
-				await setupService.handleFinishSetup(context, parsed.args[0]);
-				return;
-			}
-			if (
-				parsed.name === "link-channel" ||
-				parsed.name === "linkchannel"
-			) {
-				await linkService.handleLinkChannel(
-					context,
-					parsed.args[0],
-					parsed.args[1],
-					parsed.args[2],
-					parsed.args[3],
-					parsed.args[4],
-				);
-				return;
-			}
-			if (parsed.name === "link-role" || parsed.name === "linkrole") {
-				await linkService.handleLinkRole(
-					context,
-					parsed.args[0],
-					parsed.args[1],
-					parsed.args[2],
-				);
-				return;
-			}
-			if (parsed.name === "link-user" || parsed.name === "linkuser") {
-				await linkService.handleLinkUser(
-					context,
-					parsed.args[0],
-					parsed.args[1],
-					parsed.args[2],
-				);
-				return;
-			}
-			if (parsed.name === "sync-user" || parsed.name === "syncuser") {
-				await linkService.handleSyncUser(
-					context,
-					parsed.args[0],
-					parsed.args[1],
-				);
-				return;
-			}
-			if (
-				parsed.name === "resync-users" ||
-				parsed.name === "resyncusers"
-			) {
-				await linkService.handleResyncUsers(context);
-				return;
-			}
-			if (
-				parsed.name === "unlink-channel" ||
-				parsed.name === "unlinkchannel"
-			) {
-				await linkService.handleUnlinkChannel(
-					context,
-					parsed.args[0],
-					parsed.args[1],
-				);
-				return;
-			}
-			if (
-				parsed.name === "unlink-role" ||
-				parsed.name === "unlinkrole"
-			) {
-				await linkService.handleUnlinkRole(
-					context,
-					parsed.args[0],
-					parsed.args[1],
-				);
-				return;
-			}
-			if (
-				parsed.name === "unlink-user" ||
-				parsed.name === "unlinkuser"
-			) {
-				await linkService.handleUnlinkUser(
-					context,
-					parsed.args[0],
-					parsed.args[1],
-				);
-				return;
-			}
-			if (
-				parsed.name === "list-channels" ||
-				parsed.name === "listchannels"
-			) {
-				await infoService.handleListChannels(context, parsed.args[0]);
-				return;
-			}
-			if (parsed.name === "list-roles" || parsed.name === "listroles") {
-				await infoService.handleListRoles(context, parsed.args[0]);
-				return;
-			}
-			if (parsed.name === "list-users" || parsed.name === "listusers") {
-				await infoService.handleListUsers(context, parsed.args[0]);
-				return;
-			}
-			if (parsed.name === "help") {
-				await infoService.handleHelp(context);
-			}
-		} catch (error) {
-			logger.error("Command execution failed", {
-				platform: context.platform,
-				guildId: context.guildId,
-				userId: context.userId,
-				commandName: parsed.name,
-				error: error.message,
-				stack: error.stack,
-			});
-			await context.reply(
-				"Something went wrong while processing that command.",
-			);
+		await runParsedCommand({ context, parsed, ...services });
+	});
+
+	platformClient.on("slashCommand", async (context) => {
+		const name = String(context.commandName ?? "").toLowerCase();
+		if (!name) {
+			return;
 		}
+		const parsed = {
+			name,
+			args: Array.isArray(context.args) ? context.args : [],
+		};
+		await applyContextPrefix(context, prefixService);
+		await runParsedCommand({
+			context,
+			parsed,
+			...services,
+			replyOnUnknown: true,
+		});
 	});
 }

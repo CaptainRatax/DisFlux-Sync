@@ -4,6 +4,7 @@
 // See the LICENSE file for details.
 
 import dotenv from "dotenv";
+import { resolveBotPrefix } from "../utils/prefix.js";
 
 dotenv.config();
 
@@ -40,7 +41,7 @@ export const env = {
 	fluxerApiBase:
 		process.env.FLUXER_API_BASE?.trim() || "https://api.fluxer.app/v1",
 
-	botPrefix: process.env.BOT_PREFIX?.trim() || "!",
+	botPrefix: resolveBotPrefix(process.env.BOT_PREFIX),
 	setupCodeLength: parsePositiveInt(process.env.SETUP_CODE_LENGTH, 10),
 	setupCodeTtlMinutes: parsePositiveInt(
 		process.env.SETUP_CODE_TTL_MINUTES,
