@@ -511,6 +511,9 @@ export class FluxerPlatform extends EventEmitter {
 	}
 	async createGuildChannelFromTemplate(guildId, template) {
 		let body = null;
+		const permissionOverwrites = buildFluxerPermissionOverwrites(
+			template.permissionOverwrites ?? [],
+		);
 		if (template.kind === "text") {
 			body = {
 				type: 0,
@@ -519,9 +522,6 @@ export class FluxerPlatform extends EventEmitter {
 				nsfw: template.nsfw ?? false,
 				parent_id: template.parentId ?? undefined,
 				rate_limit_per_user: template.rateLimitPerUser ?? 0,
-				permission_overwrites: buildFluxerPermissionOverwrites(
-					template.permissionOverwrites ?? [],
-				),
 			};
 		}
 		if (template.kind === "voice") {
@@ -531,23 +531,24 @@ export class FluxerPlatform extends EventEmitter {
 				bitrate: template.bitrate ?? undefined,
 				user_limit: template.userLimit ?? 0,
 				parent_id: template.parentId ?? undefined,
-				permission_overwrites: buildFluxerPermissionOverwrites(
-					template.permissionOverwrites ?? [],
-				),
 			};
 		}
 		if (template.kind === "category") {
 			body = {
 				type: 4,
 				name: template.name,
-				permission_overwrites: buildFluxerPermissionOverwrites(
-					template.permissionOverwrites ?? [],
-				),
 			};
 		}
 		if (!body) {
 			return null;
 		}
+		setDefined(
+			body,
+			"permission_overwrites",
+			permissionOverwrites.length > 0
+				? permissionOverwrites
+				: undefined,
+		);
 		return this.request(`/guilds/${guildId}/channels`, {
 			method: "POST",
 			body: JSON.stringify(body),

@@ -273,7 +273,7 @@ export class LinkService {
 					{
 						...template,
 						parentId: mappedParentId,
-						permissionOverwrites: [],
+						permissionOverwrites: undefined,
 					},
 				);
 			if (!created) {
@@ -317,7 +317,7 @@ export class LinkService {
 					{
 						...template,
 						parentId: mappedParentId,
-						permissionOverwrites: [],
+						permissionOverwrites: undefined,
 					},
 				);
 			if (!created) {

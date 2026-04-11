@@ -541,32 +541,53 @@ export class DiscordPlatform extends EventEmitter {
 			);
 
 			if (template.kind === "text") {
-				return await guild.channels.create({
+				const options = {
 					name: template.name,
 					type: ChannelType.GuildText,
 					topic: template.topic ?? undefined,
 					nsfw: template.nsfw ?? false,
 					parent: template.parentId ?? undefined,
 					rateLimitPerUser: template.rateLimitPerUser ?? 0,
-					permissionOverwrites,
-				});
+				};
+				setDefined(
+					options,
+					"permissionOverwrites",
+					permissionOverwrites.length > 0
+						? permissionOverwrites
+						: undefined,
+				);
+				return await guild.channels.create(options);
 			}
 			if (template.kind === "voice") {
-				return await guild.channels.create({
+				const options = {
 					name: template.name,
 					type: ChannelType.GuildVoice,
 					bitrate: template.bitrate ?? undefined,
 					userLimit: template.userLimit ?? 0,
 					parent: template.parentId ?? undefined,
-					permissionOverwrites,
-				});
+				};
+				setDefined(
+					options,
+					"permissionOverwrites",
+					permissionOverwrites.length > 0
+						? permissionOverwrites
+						: undefined,
+				);
+				return await guild.channels.create(options);
 			}
 			if (template.kind === "category") {
-				return await guild.channels.create({
+				const options = {
 					name: template.name,
 					type: ChannelType.GuildCategory,
-					permissionOverwrites,
-				});
+				};
+				setDefined(
+					options,
+					"permissionOverwrites",
+					permissionOverwrites.length > 0
+						? permissionOverwrites
+						: undefined,
+				);
+				return await guild.channels.create(options);
 			}
 			return null;
 		} catch {
