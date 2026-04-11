@@ -105,13 +105,26 @@ function formatChannelTypeLabel(kind) {
 }
 function getServerLinkIdQuery(serverLinkId) {
 	const values = [];
+	const addValue = (value) => {
+		if (value === null || value === undefined) {
+			return;
+		}
+		const key = `${typeof value}:${String(value)}`;
+		if (
+			values.some(
+				(existing) => `${typeof existing}:${String(existing)}` === key,
+			)
+		) {
+			return;
+		}
+		values.push(value);
+	};
+
+	addValue(sanitizeMongoObjectId(serverLinkId));
 
 	if (serverLinkId !== null && serverLinkId !== undefined) {
-		values.push(serverLinkId);
-		const stringId = String(serverLinkId);
-		if (stringId && !values.includes(stringId)) {
-			values.push(stringId);
-		}
+		addValue(serverLinkId);
+		addValue(String(serverLinkId));
 	}
 
 	if (values.length === 1) {
@@ -136,7 +149,7 @@ function formatUserSyncResultLines(syncResult) {
 		`Role membership differences: \`${membershipSummary.differences ?? 0}\``,
 		`Role membership changes applied: \`${membershipSummary.changed ?? 0}\``,
 		`Role membership changes failed: \`${membershipSummary.failed ?? 0}\``,
-		`Role/member permission skips: \`${(membershipSummary.skippedUnmanageableRoles ?? 0) + (membershipSummary.skippedUnmanageableMembers ?? 0)}\``,
+		`Role permission skips: \`${membershipSummary.skippedUnmanageableRoles ?? 0}\``,
 	];
 }
 export class LinkService {
@@ -310,11 +323,11 @@ export class LinkService {
 			discordChannel = created;
 		}
 		const existingDiscordSide = await this.channelLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			discordChannelId: { $eq: discordChannelId },
 		});
 		const existingFluxerSide = await this.channelLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			fluxerChannelId: { $eq: fluxerChannelId },
 		});
 		if (
@@ -425,7 +438,7 @@ export class LinkService {
 				return;
 			}
 			const existing = await this.roleLinks.findOne({
-				serverLinkId: { $eq: base.serverLinkId },
+				serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 				discordRoleId: { $eq: discordRoleId },
 			});
 			if (existing) {
@@ -455,7 +468,7 @@ export class LinkService {
 				return;
 			}
 			const existing = await this.roleLinks.findOne({
-				serverLinkId: { $eq: base.serverLinkId },
+				serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 				fluxerRoleId: { $eq: fluxerRoleId },
 			});
 			if (existing) {
@@ -600,7 +613,7 @@ export class LinkService {
 			return;
 		}
 		const existingDiscordSide = await this.userLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			discordUserId: { $eq: discordUserId },
 		});
 		if (existingDiscordSide) {
@@ -608,7 +621,7 @@ export class LinkService {
 			return;
 		}
 		const existingFluxerSide = await this.userLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			fluxerUserId: { $eq: fluxerUserId },
 		});
 		if (existingFluxerSide) {
@@ -719,9 +732,7 @@ export class LinkService {
 			totals.differences += summary.differences ?? 0;
 			totals.changed += summary.changed ?? 0;
 			totals.failed += summary.failed ?? 0;
-			totals.permissionSkips +=
-				(summary.skippedUnmanageableRoles ?? 0) +
-				(summary.skippedUnmanageableMembers ?? 0);
+			totals.permissionSkips += summary.skippedUnmanageableRoles ?? 0;
 		}
 		await context.reply(
 			[
@@ -732,7 +743,7 @@ export class LinkService {
 				`Role membership differences: \`${totals.differences}\``,
 				`Role membership changes applied: \`${totals.changed}\``,
 				`Role membership changes failed: \`${totals.failed}\``,
-				`Role/member permission skips: \`${totals.permissionSkips}\``,
+				`Role permission skips: \`${totals.permissionSkips}\``,
 			].join("\n"),
 		);
 	}
@@ -751,7 +762,7 @@ export class LinkService {
 		}
 		const fieldName = getChannelFieldName(platform);
 		const link = await this.channelLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			[fieldName]: { $eq: channelId },
 		});
 		if (!link) {
@@ -778,7 +789,7 @@ export class LinkService {
 		const removedMessageLinks =
 			messageLinkFilters.length > 0
 				? await this.messageLinks.deleteMany({
-						serverLinkId: base.serverLinkId,
+						serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 						$or: messageLinkFilters,
 					})
 				: { deletedCount: 0 };
@@ -806,7 +817,7 @@ export class LinkService {
 		}
 		const fieldName = getRoleFieldName(platform);
 		const link = await this.roleLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			[fieldName]: { $eq: roleId },
 		});
 		if (!link) {
@@ -839,7 +850,7 @@ export class LinkService {
 		}
 		const fieldName = getUserFieldName(platform);
 		const link = await this.userLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			[fieldName]: { $eq: userId },
 		});
 		if (!link) {
@@ -933,7 +944,7 @@ export class LinkService {
 				? "discordChannelId"
 				: "fluxerChannelId";
 		const link = await this.channelLinks.findOne({
-			serverLinkId: { $eq: sanitizedServerLinkId },
+			serverLinkId: getServerLinkIdQuery(sanitizedServerLinkId),
 			[sourceField]: { $eq: sanitizedSourceChannelId },
 		});
 		return link?.[targetField] ?? null;

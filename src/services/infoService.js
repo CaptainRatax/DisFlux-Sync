@@ -3,6 +3,8 @@
 // Licensed under the GNU Affero General Public License v3.0 or later
 // See the LICENSE file for details.
 
+import { sanitizeMongoObjectId } from "../utils/sanitize.js";
+
 function getGuildFieldName(platform) {
 	if (platform === "discord") {
 		return "discordGuildId";
@@ -60,13 +62,26 @@ function buildEmbed({ title, description, fields = [], footerText }) {
 }
 function getServerLinkIdQuery(serverLinkId) {
 	const values = [];
+	const addValue = (value) => {
+		if (value === null || value === undefined) {
+			return;
+		}
+		const key = `${typeof value}:${String(value)}`;
+		if (
+			values.some(
+				(existing) => `${typeof existing}:${String(existing)}` === key,
+			)
+		) {
+			return;
+		}
+		values.push(value);
+	};
+
+	addValue(sanitizeMongoObjectId(serverLinkId));
 
 	if (serverLinkId !== null && serverLinkId !== undefined) {
-		values.push(serverLinkId);
-		const stringId = String(serverLinkId);
-		if (stringId && !values.includes(stringId)) {
-			values.push(stringId);
-		}
+		addValue(serverLinkId);
+		addValue(String(serverLinkId));
 	}
 
 	if (values.length === 1) {

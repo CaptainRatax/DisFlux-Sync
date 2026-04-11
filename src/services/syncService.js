@@ -118,7 +118,6 @@ function createRoleMembershipSummary() {
 		differences: 0,
 		changed: 0,
 		skippedUnmanageableRoles: 0,
-		skippedUnmanageableMembers: 0,
 		failed: 0,
 	};
 }

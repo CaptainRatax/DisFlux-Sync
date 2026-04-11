@@ -8,6 +8,7 @@ import { Client, GatewayDispatchEvents } from "@discordjs/core";
 import { REST } from "@discordjs/rest";
 import { WebSocketManager } from "@discordjs/ws";
 import { logger } from "../../core/logger.js";
+const ALLOWED_FLUXER_API_ORIGINS = new Set(["https://api.fluxer.app"]);
 const FLUXER_ADMINISTRATOR_PERMISSION = 0x8n;
 const FLUXER_MANAGE_ROLES_PERMISSION = 0x10000000n;
 
@@ -17,6 +18,9 @@ function hasPermission(permissions, permission) {
 
 function parseFluxerApiConfig(rawBase) {
 	const url = new URL(rawBase);
+	if (!ALLOWED_FLUXER_API_ORIGINS.has(url.origin)) {
+		throw new Error(`Unsupported Fluxer API origin: ${url.origin}`);
+	}
 	const segments = url.pathname.split("/").filter(Boolean);
 	let version = "1";
 	if (segments.length > 0) {
@@ -31,6 +35,24 @@ function parseFluxerApiConfig(rawBase) {
 			? `${url.origin}/${segments.join("/")}`
 			: url.origin;
 	return { apiBase, version };
+}
+function buildFluxerApiUrl(apiBase, apiVersion, path) {
+	if (
+		typeof path !== "string" ||
+		!path.startsWith("/") ||
+		path.startsWith("//") ||
+		path.includes("\\")
+	) {
+		throw new Error("Fluxer API path must be a relative absolute path");
+	}
+
+	const normalizedApiBase = apiBase.endsWith("/") ? apiBase : `${apiBase}/`;
+	const url = new URL(`v${apiVersion}${path}`, normalizedApiBase);
+	if (!ALLOWED_FLUXER_API_ORIGINS.has(url.origin)) {
+		throw new Error(`Unsupported Fluxer API request origin: ${url.origin}`);
+	}
+
+	return url;
 }
 function extractMemberRoleIds(member) {
 	return member?.roles ?? member?.role_ids ?? [];
@@ -317,7 +339,12 @@ export class FluxerPlatform extends EventEmitter {
 			headers["Content-Type"] = "application/json";
 		}
 		try {
-			return await fetch(`${this.apiBase}/v${this.apiVersion}${path}`, {
+			const url = buildFluxerApiUrl(
+				this.apiBase,
+				this.apiVersion,
+				path,
+			);
+			return await fetch(url, {
 				...options,
 				headers,
 			});
