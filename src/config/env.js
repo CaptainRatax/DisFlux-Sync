@@ -28,6 +28,16 @@ function parsePositiveInt(value, fallback) {
 	return parsed;
 }
 
+const setupCodeLength = parsePositiveInt(process.env.SETUP_CODE_LENGTH, 10);
+const setupCodeTtlMinutes = parsePositiveInt(
+	process.env.SETUP_CODE_TTL_MINUTES,
+	15,
+);
+const userLinkCodeLength = Math.max(
+	10,
+	parsePositiveInt(process.env.USER_LINK_CODE_LENGTH, 10),
+);
+
 export const env = {
 	nodeEnv: process.env.NODE_ENV?.trim() || "development",
 
@@ -42,10 +52,12 @@ export const env = {
 		process.env.FLUXER_API_BASE?.trim() || "https://api.fluxer.app/v1",
 
 	botPrefix: resolveBotPrefix(process.env.BOT_PREFIX),
-	setupCodeLength: parsePositiveInt(process.env.SETUP_CODE_LENGTH, 10),
-	setupCodeTtlMinutes: parsePositiveInt(
-		process.env.SETUP_CODE_TTL_MINUTES,
-		15,
+	setupCodeLength,
+	setupCodeTtlMinutes,
+	userLinkCodeLength,
+	userLinkCodeTtlMinutes: parsePositiveInt(
+		process.env.USER_LINK_CODE_TTL_MINUTES,
+		setupCodeTtlMinutes,
 	),
 	messageLinkTtlDays: parsePositiveInt(process.env.MESSAGE_LINK_TTL_DAYS, 30),
 	httpPort: Number(process.env.HTTP_PORT || 3000),

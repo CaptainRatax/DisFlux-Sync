@@ -144,8 +144,12 @@ FLUXER_API_BASE=https://api.fluxer.app/v1
 BOT_PREFIX=.
 SETUP_CODE_LENGTH=10
 SETUP_CODE_TTL_MINUTES=15
+USER_LINK_CODE_LENGTH=10
+USER_LINK_CODE_TTL_MINUTES=15
 MESSAGE_LINK_TTL_DAYS=30
 ```
+
+`USER_LINK_CODE_LENGTH` has a minimum of 10 characters even if a lower value is configured.
 
 ## Running the Bot
 

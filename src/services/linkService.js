@@ -219,8 +219,8 @@ export class LinkService {
 		platforms,
 		botPrefix,
 		syncService = null,
-		setupCodeLength = 10,
-		setupCodeTtlMinutes = 15,
+		userLinkCodeLength = 10,
+		userLinkCodeTtlMinutes = 15,
 	}) {
 		this.serverLinks = mongo.collection("server_links");
 		this.channelLinks = mongo.collection("channel_links");
@@ -231,8 +231,8 @@ export class LinkService {
 		this.platforms = platforms;
 		this.botPrefix = botPrefix;
 		this.syncService = syncService;
-		this.setupCodeLength = setupCodeLength;
-		this.setupCodeTtlMinutes = setupCodeTtlMinutes;
+		this.userLinkCodeLength = Math.max(10, userLinkCodeLength);
+		this.userLinkCodeTtlMinutes = userLinkCodeTtlMinutes;
 	}
 	getBotPrefix(context) {
 		return context.botPrefix ?? this.botPrefix;
@@ -763,7 +763,7 @@ export class LinkService {
 			return;
 		}
 
-		const code = sanitizeSetupCode(codeRaw, this.setupCodeLength);
+		const code = sanitizeSetupCode(codeRaw, this.userLinkCodeLength);
 		if (!code) {
 			await context.reply(
 				`Usage: ${this.getBotPrefix(context)}link-me [code]`,
@@ -839,7 +839,7 @@ export class LinkService {
 		const formattedCode = formatSetupCode(code);
 		const now = new Date();
 		const expiresAt = new Date(
-			now.getTime() + this.setupCodeTtlMinutes * 60 * 1000,
+			now.getTime() + this.userLinkCodeTtlMinutes * 60 * 1000,
 		);
 		const pendingUserLink = {
 			codeHash: hashSetupCode(code),
@@ -877,7 +877,7 @@ export class LinkService {
 				[
 					`Your DisFlux Sync user link code is: \`${formattedCode}\``,
 					`Run ${formatInlineCode(`${this.getBotPrefix(context)}link-me ${formattedCode}`)} inside the linked ${formatPlatformLabel(targetPlatform)} server.`,
-					`This code expires in ${this.setupCodeTtlMinutes} minutes and can only be used once.`,
+					`This code expires in ${this.userLinkCodeTtlMinutes} minutes and can only be used once.`,
 					"Do not share it with anyone.",
 				].join("\n"),
 			);
@@ -899,7 +899,7 @@ export class LinkService {
 			[
 				"I sent you a DM with your user link code.",
 				`Run ${formatInlineCode(`${this.getBotPrefix(context)}link-me <code>`)} inside the linked ${formatPlatformLabel(targetPlatform)} server to finish linking your user.`,
-				`The code expires in ${this.setupCodeTtlMinutes} minutes and can only be used once.`,
+				`The code expires in ${this.userLinkCodeTtlMinutes} minutes and can only be used once.`,
 			].join("\n"),
 		);
 	}
@@ -1376,20 +1376,15 @@ export class LinkService {
 	async consumePendingUserLinkCode(code) {
 		const result = await this.pendingUserLinks.findOneAndDelete({
 			codeHash: { $eq: hashSetupCode(code) },
+			expiresAt: { $gt: new Date() },
 		});
-		if (
-			result &&
-			Object.prototype.hasOwnProperty.call(result, "value")
-		) {
-			return result.value;
-		}
 		return result;
 	}
 	async createUniqueUserLinkCode() {
 		for (let attempt = 0; attempt < 10; attempt += 1) {
 			const code = sanitizeSetupCode(
-				generateSetupCode(this.setupCodeLength),
-				this.setupCodeLength,
+				generateSetupCode(this.userLinkCodeLength),
+				this.userLinkCodeLength,
 			);
 			if (!code) {
 				continue;

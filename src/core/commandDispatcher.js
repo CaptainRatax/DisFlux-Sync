@@ -73,9 +73,7 @@ async function executeParsedCommand({
 	}
 	if (
 		parsed.name === "link-me" ||
-		parsed.name === "linkme" ||
-		parsed.name === "sync-me" ||
-		parsed.name === "syncme"
+		parsed.name === "linkme"
 	) {
 		await linkService.handleLinkMe(context, parsed.args[0]);
 		return true;
