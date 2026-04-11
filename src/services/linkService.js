@@ -851,7 +851,7 @@ export class LinkService {
 			sourceUserId,
 			targetPlatform,
 			targetGuildId,
-			priority: sourcePlatform,
+			priority: "discord",
 			createdAt: now,
 			expiresAt,
 		};
