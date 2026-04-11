@@ -207,6 +207,17 @@ export function buildDiscordSlashCommands() {
 		description: "Manually resync all linked users for this server pair.",
 	});
 
+	const resyncRoles = createCommand({
+		name: "resync-roles",
+		description: "Manually resync all linked roles for this server pair.",
+	});
+
+	const resyncChannels = createCommand({
+		name: "resync-channels",
+		description:
+			"Manually resync all linked channels for this server pair.",
+	});
+
 	const unlinkChannel = addPlatformOption(
 		createCommand({
 			name: "unlink-channel",
@@ -292,6 +303,8 @@ export function buildDiscordSlashCommands() {
 		linkUser,
 		syncUser,
 		resyncUsers,
+		resyncRoles,
+		resyncChannels,
 		unlinkChannel,
 		unlinkRole,
 		unlinkUser,

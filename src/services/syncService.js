@@ -230,6 +230,59 @@ function createRoleMembershipSummary() {
 	};
 }
 
+function createRoleMetadataSyncResult() {
+	return {
+		differences: 0,
+		changed: 0,
+		skippedUnsupported: 0,
+		skippedMissingSource: 0,
+		skippedMissingTarget: 0,
+		skippedUnmanageable: 0,
+		failed: 0,
+	};
+}
+
+function createRoleMetadataSummary() {
+	return {
+		checked: 0,
+		...createRoleMetadataSyncResult(),
+	};
+}
+
+function createChannelMetadataSyncResult() {
+	return {
+		differences: 0,
+		changed: 0,
+		skippedUnsupported: 0,
+		skippedMissingIds: 0,
+		skippedMissingSource: 0,
+		skippedMissingTarget: 0,
+		skippedTypeMismatch: 0,
+		skippedUnmanageable: 0,
+		failed: 0,
+	};
+}
+
+function createChannelMetadataSummary() {
+	return {
+		checked: 0,
+		roleLinksUsed: 0,
+		...createChannelMetadataSyncResult(),
+	};
+}
+
+function addSyncResult(summary, result) {
+	if (!result) {
+		return;
+	}
+
+	for (const [key, value] of Object.entries(result)) {
+		if (typeof summary[key] === "number") {
+			summary[key] += Number(value) || 0;
+		}
+	}
+}
+
 export class SyncService {
 	constructor({ mongo, platforms }) {
 		this.serverLinks = mongo.collection("server_links");
@@ -319,6 +372,59 @@ export class SyncService {
 		for (const userLink of userLinks) {
 			await this.syncLinkedUser(serverLink, userLink, roleLinks);
 		}
+	}
+
+	async resyncLinkedRoles(serverLink) {
+		const roleLinks = await this.roleLinks
+			.find({
+				serverLinkId: getServerLinkIdFilter(serverLink._id),
+			})
+			.toArray();
+		const summary = createRoleMetadataSummary();
+		summary.checked = roleLinks.length;
+
+		for (const roleLink of roleLinks) {
+			addSyncResult(
+				summary,
+				await this.syncRoleMetadata(
+					serverLink,
+					roleLink,
+					roleLink.priority,
+				),
+			);
+		}
+
+		return summary;
+	}
+
+	async resyncLinkedChannels(serverLink) {
+		const serverLinkIdFilter = getServerLinkIdFilter(serverLink._id);
+		const roleLinks = await this.roleLinks
+			.find({
+				serverLinkId: serverLinkIdFilter,
+			})
+			.toArray();
+		const channelLinks = await this.channelLinks
+			.find({
+				serverLinkId: serverLinkIdFilter,
+			})
+			.toArray();
+		const summary = createChannelMetadataSummary();
+		summary.checked = channelLinks.length;
+		summary.roleLinksUsed = roleLinks.length;
+
+		for (const channelLink of channelLinks) {
+			addSyncResult(
+				summary,
+				await this.syncLinkedChannel(
+					serverLink,
+					channelLink,
+					roleLinks,
+				),
+			);
+		}
+
+		return summary;
 	}
 
 	async syncLinkedUser(serverLink, userLink, roleLinks = null) {
@@ -420,13 +526,15 @@ export class SyncService {
 		roleLinks = null,
 		sourcePlatformOverride = null,
 	) {
+		const result = createChannelMetadataSyncResult();
 		const sourcePlatform = sourcePlatformOverride ?? channelLink.priority;
 		if (!isSupportedPlatform(sourcePlatform)) {
 			logger.warn("Skipped channel sync with unsupported source platform", {
 				sourcePlatform,
 				channelLinkId: String(channelLink._id),
 			});
-			return;
+			result.skippedUnsupported += 1;
+			return result;
 		}
 
 		const targetPlatform = getOppositePlatform(sourcePlatform);
@@ -452,7 +560,8 @@ export class SyncService {
 				sourceChannelId,
 				targetChannelId,
 			});
-			return;
+			result.skippedMissingIds += 1;
+			return result;
 		}
 
 		const sourceTemplate = await this.platforms[
@@ -465,7 +574,8 @@ export class SyncService {
 				sourceGuildId,
 				sourceChannelId,
 			});
-			return;
+			result.skippedMissingSource += 1;
+			return result;
 		}
 
 		const targetTemplate = await this.platforms[
@@ -478,7 +588,8 @@ export class SyncService {
 				targetGuildId,
 				targetChannelId,
 			});
-			return;
+			result.skippedMissingTarget += 1;
+			return result;
 		}
 
 		if (sourceTemplate.kind !== targetTemplate.kind) {
@@ -492,7 +603,8 @@ export class SyncService {
 				sourceKind: sourceTemplate.kind,
 				targetKind: targetTemplate.kind,
 			});
-			return;
+			result.skippedTypeMismatch += 1;
+			return result;
 		}
 
 		const linkedRoleLinks =
@@ -525,8 +637,10 @@ export class SyncService {
 		};
 
 		if (channelTemplatesEqual(mappedTemplate, targetTemplate)) {
-			return;
+			return result;
 		}
+
+		result.differences += 1;
 
 		const canManageTarget = await this.platforms[
 			targetPlatform
@@ -538,7 +652,8 @@ export class SyncService {
 				targetGuildId,
 				targetChannelId,
 			});
-			return;
+			result.skippedUnmanageable += 1;
+			return result;
 		}
 
 		this.guard.mark(
@@ -557,12 +672,17 @@ export class SyncService {
 		);
 
 		if (!updated) {
+			result.failed += 1;
 			logger.warn("Failed to update target channel", {
 				targetPlatform,
 				targetGuildId,
 				targetChannelId,
 			});
+			return result;
 		}
+
+		result.changed += 1;
+		return result;
 	}
 
 	async mapTargetParentId(
@@ -852,6 +972,16 @@ export class SyncService {
 	}
 
 	async syncRoleMetadata(serverLink, roleLink, sourcePlatform) {
+		const result = createRoleMetadataSyncResult();
+		if (!isSupportedPlatform(sourcePlatform)) {
+			logger.warn("Skipped role sync with unsupported source platform", {
+				sourcePlatform,
+				roleLinkId: String(roleLink._id),
+			});
+			result.skippedUnsupported += 1;
+			return result;
+		}
+
 		const targetPlatform = getOppositePlatform(sourcePlatform);
 
 		const sourceGuildId = getGuildIdForPlatform(serverLink, sourcePlatform);
@@ -870,7 +1000,8 @@ export class SyncService {
 				sourceGuildId,
 				sourceRoleId,
 			});
-			return;
+			result.skippedMissingSource += 1;
+			return result;
 		}
 
 		const targetTemplate = await this.platforms[
@@ -883,12 +1014,15 @@ export class SyncService {
 				targetGuildId,
 				targetRoleId,
 			});
-			return;
+			result.skippedMissingTarget += 1;
+			return result;
 		}
 
 		if (roleTemplatesEqual(sourceTemplate, targetTemplate)) {
-			return;
+			return result;
 		}
+
+		result.differences += 1;
 
 		const canManageTarget = await this.platforms[
 			targetPlatform
@@ -900,7 +1034,8 @@ export class SyncService {
 				targetGuildId,
 				targetRoleId,
 			});
-			return;
+			result.skippedUnmanageable += 1;
+			return result;
 		}
 
 		this.guard.mark(targetPlatform, "role", targetGuildId, targetRoleId);
@@ -914,12 +1049,17 @@ export class SyncService {
 		);
 
 		if (!updated) {
+			result.failed += 1;
 			logger.warn("Failed to update target role", {
 				targetPlatform,
 				targetGuildId,
 				targetRoleId,
 			});
+			return result;
 		}
+
+		result.changed += 1;
+		return result;
 	}
 
 	async syncNickname(serverLink, userLink, sourcePlatform, snapshots) {

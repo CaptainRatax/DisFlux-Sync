@@ -83,6 +83,17 @@ async function executeParsedCommand({
 		await linkService.handleResyncUsers(context);
 		return true;
 	}
+	if (parsed.name === "resync-roles" || parsed.name === "resyncroles") {
+		await linkService.handleResyncRoles(context);
+		return true;
+	}
+	if (
+		parsed.name === "resync-channels" ||
+		parsed.name === "resyncchannels"
+	) {
+		await linkService.handleResyncChannels(context);
+		return true;
+	}
 	if (parsed.name === "unlink-channel" || parsed.name === "unlinkchannel") {
 		await linkService.handleUnlinkChannel(
 			context,
