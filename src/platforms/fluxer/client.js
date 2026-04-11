@@ -8,7 +8,8 @@ import { Client, GatewayDispatchEvents } from "@discordjs/core";
 import { REST } from "@discordjs/rest";
 import { WebSocketManager } from "@discordjs/ws";
 import { logger } from "../../core/logger.js";
-const ALLOWED_FLUXER_API_ORIGINS = new Set(["https://api.fluxer.app"]);
+const FLUXER_API_ORIGIN = "https://api.fluxer.app";
+const ALLOWED_FLUXER_API_ORIGINS = new Set([FLUXER_API_ORIGIN]);
 const FLUXER_ADMINISTRATOR_PERMISSION = 0x8n;
 const FLUXER_MANAGE_ROLES_PERMISSION = 0x10000000n;
 
@@ -52,7 +53,7 @@ function buildFluxerApiUrl(apiBase, apiVersion, path) {
 		throw new Error(`Unsupported Fluxer API request origin: ${url.origin}`);
 	}
 
-	return url;
+	return `${FLUXER_API_ORIGIN}${url.pathname}${url.search}`;
 }
 function extractMemberRoleIds(member) {
 	return member?.roles ?? member?.role_ids ?? [];
@@ -346,6 +347,7 @@ export class FluxerPlatform extends EventEmitter {
 			);
 			return await fetch(url, {
 				...options,
+				redirect: "error",
 				headers,
 			});
 		} catch (error) {

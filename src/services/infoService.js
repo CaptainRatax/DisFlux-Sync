@@ -62,20 +62,22 @@ function buildEmbed({ title, description, fields = [], footerText }) {
 }
 function getServerLinkIdQuery(serverLinkId) {
 	const values = [];
-	const addValue = (value) => {
+	function addValue(value) {
 		if (value === null || value === undefined) {
 			return;
 		}
-		const key = `${typeof value}:${String(value)}`;
 		if (
-			values.some(
-				(existing) => `${typeof existing}:${String(existing)}` === key,
-			)
+			values.some(function valueMatches(existing) {
+				return (
+					typeof existing === typeof value &&
+					String(existing) === String(value)
+				);
+			})
 		) {
 			return;
 		}
 		values.push(value);
-	};
+	}
 
 	addValue(sanitizeMongoObjectId(serverLinkId));
 
