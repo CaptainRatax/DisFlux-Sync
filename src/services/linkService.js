@@ -270,7 +270,11 @@ export class LinkService {
 			const created =
 				await this.platforms.fluxer.createGuildChannelFromTemplate(
 					base.serverLink.fluxerGuildId,
-					{ ...template, parentId: mappedParentId },
+					{
+						...template,
+						parentId: mappedParentId,
+						permissionOverwrites: [],
+					},
 				);
 			if (!created) {
 				await context.reply(
@@ -310,7 +314,11 @@ export class LinkService {
 			const created =
 				await this.platforms.discord.createGuildChannelFromTemplate(
 					base.serverLink.discordGuildId,
-					{ ...template, parentId: mappedParentId },
+					{
+						...template,
+						parentId: mappedParentId,
+						permissionOverwrites: [],
+					},
 				);
 			if (!created) {
 				await context.reply(
@@ -360,6 +368,14 @@ export class LinkService {
 				{ _id: existing._id },
 				{ $set: { priority, syncBotMessages, syncWebhookMessages } },
 			);
+			if (this.syncService) {
+				await this.syncService.syncLinkedChannel(base.serverLink, {
+					...existing,
+					priority,
+					syncBotMessages,
+					syncWebhookMessages,
+				});
+			}
 			await context.reply(
 				[
 					"Channel link updated successfully.",
@@ -372,7 +388,7 @@ export class LinkService {
 			);
 			return;
 		}
-		await this.channelLinks.insertOne({
+		const channelLink = {
 			serverLinkId: base.serverLinkId,
 			discordChannelId,
 			fluxerChannelId,
@@ -380,7 +396,17 @@ export class LinkService {
 			syncBotMessages,
 			syncWebhookMessages,
 			createdAt: new Date(),
-		});
+		};
+		const result = await this.channelLinks.insertOne(channelLink);
+		channelLink._id = result.insertedId;
+
+		if (this.syncService) {
+			await this.syncService.syncLinkedChannel(
+				base.serverLink,
+				channelLink,
+			);
+		}
+
 		const discordTemplate =
 			await this.platforms.discord.getGuildChannelTemplate(
 				base.serverLink.discordGuildId,

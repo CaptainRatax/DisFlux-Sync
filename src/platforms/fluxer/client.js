@@ -11,6 +11,7 @@ import { logger } from "../../core/logger.js";
 const FLUXER_API_ORIGIN = "https://api.fluxer.app";
 const ALLOWED_FLUXER_API_ORIGINS = new Set([FLUXER_API_ORIGIN]);
 const FLUXER_ADMINISTRATOR_PERMISSION = 0x8n;
+const FLUXER_MANAGE_CHANNELS_PERMISSION = 0x10n;
 const FLUXER_MANAGE_ROLES_PERMISSION = 0x10000000n;
 
 function hasPermission(permissions, permission) {
@@ -99,6 +100,37 @@ function buildMemberSnapshot(member) {
 		nick: member?.nick ?? null,
 		roleIds: new Set(extractMemberRoleIds(member)),
 	};
+}
+function normalizePermissionOverwriteType(type) {
+	if (type === "member" || type === 1 || type === "1") {
+		return { api: 1, normalized: "member" };
+	}
+
+	return { api: 0, normalized: "role" };
+}
+function buildChannelPermissionOverwrites(channel) {
+	return (channel.permission_overwrites ?? []).map((overwrite) => {
+		const type = normalizePermissionOverwriteType(overwrite.type);
+		return {
+			id: overwrite.id,
+			type: type.normalized,
+			allow: String(overwrite.allow ?? "0"),
+			deny: String(overwrite.deny ?? "0"),
+		};
+	});
+}
+function buildFluxerPermissionOverwrites(overwrites = []) {
+	return overwrites.map((overwrite) => ({
+		id: overwrite.id,
+		type: normalizePermissionOverwriteType(overwrite.type).api,
+		allow: String(overwrite.allow ?? "0"),
+		deny: String(overwrite.deny ?? "0"),
+	}));
+}
+function setDefined(target, key, value) {
+	if (value !== undefined) {
+		target[key] = value;
+	}
 }
 export class FluxerPlatform extends EventEmitter {
 	constructor({ token, apiBase }) {
@@ -264,6 +296,22 @@ export class FluxerPlatform extends EventEmitter {
 				});
 			}
 		});
+		this.client.on(
+			GatewayDispatchEvents.ChannelUpdate,
+			async ({ data }) => {
+				if (!data.guild_id) {
+					return;
+				}
+				if (!(await this.isSupportedGuildChannelType(data))) {
+					return;
+				}
+				this.emit("channelUpdate", {
+					platform: "fluxer",
+					guildId: data.guild_id,
+					channelId: data.id,
+				});
+			},
+		);
 		this.client.on(
 			GatewayDispatchEvents.GuildMemberUpdate,
 			async ({ data }) => {
@@ -434,6 +482,9 @@ export class FluxerPlatform extends EventEmitter {
 				topic: channel.topic ?? null,
 				nsfw: channel.nsfw ?? false,
 				parentId: channel.parent_id ?? null,
+				rateLimitPerUser: channel.rate_limit_per_user ?? 0,
+				permissionOverwrites:
+					buildChannelPermissionOverwrites(channel),
 			};
 		}
 		if (channel.type === 2) {
@@ -443,10 +494,18 @@ export class FluxerPlatform extends EventEmitter {
 				bitrate: channel.bitrate ?? null,
 				userLimit: channel.user_limit ?? 0,
 				parentId: channel.parent_id ?? null,
+				permissionOverwrites:
+					buildChannelPermissionOverwrites(channel),
 			};
 		}
 		if (channel.type === 4) {
-			return { kind: "category", name: channel.name };
+			return {
+				kind: "category",
+				name: channel.name,
+				parentId: null,
+				permissionOverwrites:
+					buildChannelPermissionOverwrites(channel),
+			};
 		}
 		return null;
 	}
@@ -459,6 +518,10 @@ export class FluxerPlatform extends EventEmitter {
 				topic: template.topic ?? undefined,
 				nsfw: template.nsfw ?? false,
 				parent_id: template.parentId ?? undefined,
+				rate_limit_per_user: template.rateLimitPerUser ?? 0,
+				permission_overwrites: buildFluxerPermissionOverwrites(
+					template.permissionOverwrites ?? [],
+				),
 			};
 		}
 		if (template.kind === "voice") {
@@ -468,16 +531,58 @@ export class FluxerPlatform extends EventEmitter {
 				bitrate: template.bitrate ?? undefined,
 				user_limit: template.userLimit ?? 0,
 				parent_id: template.parentId ?? undefined,
+				permission_overwrites: buildFluxerPermissionOverwrites(
+					template.permissionOverwrites ?? [],
+				),
 			};
 		}
 		if (template.kind === "category") {
-			body = { type: 4, name: template.name };
+			body = {
+				type: 4,
+				name: template.name,
+				permission_overwrites: buildFluxerPermissionOverwrites(
+					template.permissionOverwrites ?? [],
+				),
+			};
 		}
 		if (!body) {
 			return null;
 		}
 		return this.request(`/guilds/${guildId}/channels`, {
 			method: "POST",
+			body: JSON.stringify(body),
+		});
+	}
+	async updateGuildChannelFromTemplate(guildId, channelId, template) {
+		if (!(await this.canManageChannel(guildId, channelId))) {
+			return null;
+		}
+		const body = {
+			name: template.name,
+			permission_overwrites: buildFluxerPermissionOverwrites(
+				template.permissionOverwrites ?? [],
+			),
+		};
+
+		setDefined(body, "parent_id", template.parentId);
+
+		if (template.kind === "text") {
+			setDefined(body, "topic", template.topic ?? null);
+			setDefined(body, "nsfw", template.nsfw ?? false);
+			setDefined(
+				body,
+				"rate_limit_per_user",
+				template.rateLimitPerUser ?? 0,
+			);
+		}
+
+		if (template.kind === "voice") {
+			setDefined(body, "bitrate", template.bitrate ?? undefined);
+			setDefined(body, "user_limit", template.userLimit ?? 0);
+		}
+
+		return this.request(`/channels/${channelId}`, {
+			method: "PATCH",
 			body: JSON.stringify(body),
 		});
 	}
@@ -729,6 +834,27 @@ export class FluxerPlatform extends EventEmitter {
 		const roles = await this.fetchGuildRoles(guildId);
 		const permissions = this.calculatePermissionsFromRoles(member, roles);
 		return hasPermission(permissions, FLUXER_ADMINISTRATOR_PERMISSION);
+	}
+	async canManageChannel(guildId, channelId) {
+		const channel = await this.fetchGuildChannel(guildId, channelId);
+		const botMember = await this.fetchCurrentGuildMember(guildId);
+		const guild = await this.fetchGuild(guildId);
+		if (!channel || !botMember || !guild) {
+			return false;
+		}
+		const botUserId = extractMemberUserId(botMember);
+		if (guild.owner_id === botUserId) {
+			return true;
+		}
+		const roles = await this.fetchGuildRoles(guildId);
+		const permissions = this.calculatePermissionsFromRoles(
+			botMember,
+			roles,
+		);
+		return (
+			hasPermission(permissions, FLUXER_ADMINISTRATOR_PERMISSION) ||
+			hasPermission(permissions, FLUXER_MANAGE_CHANNELS_PERMISSION)
+		);
 	}
 	async canManageRole(guildId, roleId) {
 		const targetRole = await this.fetchGuildRole(guildId, roleId);

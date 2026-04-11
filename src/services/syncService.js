@@ -25,6 +25,12 @@ function getGuildIdForPlatform(serverLink, platform) {
 		: serverLink.fluxerGuildId;
 }
 
+function getChannelIdForPlatform(channelLink, platform) {
+	return platform === "discord"
+		? channelLink.discordChannelId
+		: channelLink.fluxerChannelId;
+}
+
 function getRoleIdForPlatform(roleLink, platform) {
 	return platform === "discord"
 		? roleLink.discordRoleId
@@ -35,6 +41,22 @@ function getUserIdForPlatform(userLink, platform) {
 	return platform === "discord"
 		? userLink.discordUserId
 		: userLink.fluxerUserId;
+}
+
+function getChannelFieldForPlatform(platform) {
+	return platform === "discord" ? "discordChannelId" : "fluxerChannelId";
+}
+
+function isSupportedPlatform(platform) {
+	return platform === "discord" || platform === "fluxer";
+}
+
+function normalizeNullableString(value) {
+	if (value === null || value === undefined) {
+		return null;
+	}
+
+	return String(value);
 }
 
 function normalizeRoleTemplate(template) {
@@ -57,6 +79,92 @@ function roleTemplatesEqual(left, right) {
 		a.permissions === b.permissions &&
 		a.hoist === b.hoist &&
 		a.mentionable === b.mentionable
+	);
+}
+
+function normalizeOverwriteType(type) {
+	if (type === "role" || type === 0 || type === "0") {
+		return "role";
+	}
+
+	if (type === "member" || type === 1 || type === "1") {
+		return "member";
+	}
+
+	return null;
+}
+
+function normalizePermissionOverwrite(overwrite) {
+	const id = overwrite?.id ? String(overwrite.id) : null;
+	const type = normalizeOverwriteType(overwrite?.type);
+
+	if (!id || !type) {
+		return null;
+	}
+
+	return {
+		id,
+		type,
+		allow: String(overwrite?.allow ?? "0"),
+		deny: String(overwrite?.deny ?? "0"),
+	};
+}
+
+function normalizePermissionOverwrites(overwrites = []) {
+	const byKey = new Map();
+
+	for (const rawOverwrite of overwrites ?? []) {
+		const overwrite = normalizePermissionOverwrite(rawOverwrite);
+		if (!overwrite) {
+			continue;
+		}
+
+		byKey.set(`${overwrite.type}:${overwrite.id}`, overwrite);
+	}
+
+	return [...byKey.values()].sort((left, right) => {
+		if (left.type !== right.type) {
+			return left.type.localeCompare(right.type);
+		}
+
+		return left.id.localeCompare(right.id);
+	});
+}
+
+function normalizeChannelTemplate(template) {
+	const kind = String(template?.kind ?? "unknown");
+	const normalized = {
+		kind,
+		name: String(template?.name ?? ""),
+		parentId: normalizeNullableString(template?.parentId),
+		permissionOverwrites: normalizePermissionOverwrites(
+			template?.permissionOverwrites,
+		),
+	};
+
+	if (kind === "text") {
+		normalized.topic = normalizeNullableString(template?.topic);
+		normalized.nsfw = Boolean(template?.nsfw);
+		normalized.rateLimitPerUser = Number(
+			template?.rateLimitPerUser ?? 0,
+		);
+	}
+
+	if (kind === "voice") {
+		normalized.bitrate =
+			template?.bitrate === null || template?.bitrate === undefined
+				? null
+				: Number(template.bitrate);
+		normalized.userLimit = Number(template?.userLimit ?? 0);
+	}
+
+	return normalized;
+}
+
+function channelTemplatesEqual(left, right) {
+	return (
+		JSON.stringify(normalizeChannelTemplate(left)) ===
+		JSON.stringify(normalizeChannelTemplate(right))
 	);
 }
 
@@ -125,6 +233,7 @@ function createRoleMembershipSummary() {
 export class SyncService {
 	constructor({ mongo, platforms }) {
 		this.serverLinks = mongo.collection("server_links");
+		this.channelLinks = mongo.collection("channel_links");
 		this.roleLinks = mongo.collection("role_links");
 		this.userLinks = mongo.collection("user_links");
 		this.platforms = platforms;
@@ -143,6 +252,14 @@ export class SyncService {
 
 		this.platforms.fluxer.on("roleUpdate", async (event) => {
 			await this.handleLiveRoleUpdate(event);
+		});
+
+		this.platforms.discord.on("channelUpdate", async (event) => {
+			await this.handleLiveChannelUpdate(event);
+		});
+
+		this.platforms.fluxer.on("channelUpdate", async (event) => {
+			await this.handleLiveChannelUpdate(event);
 		});
 
 		this.platforms.discord.on("memberUpdate", async (event) => {
@@ -175,6 +292,12 @@ export class SyncService {
 			})
 			.toArray();
 
+		const channelLinks = await this.channelLinks
+			.find({
+				serverLinkId: serverLinkIdFilter,
+			})
+			.toArray();
+
 		const userLinks = await this.userLinks
 			.find({
 				serverLinkId: serverLinkIdFilter,
@@ -187,6 +310,10 @@ export class SyncService {
 				roleLink,
 				roleLink.priority,
 			);
+		}
+
+		for (const channelLink of channelLinks) {
+			await this.syncLinkedChannel(serverLink, channelLink, roleLinks);
 		}
 
 		for (const userLink of userLinks) {
@@ -245,6 +372,12 @@ export class SyncService {
 	async syncLinkedRoleAcrossUsers(serverLink, roleLink) {
 		await this.syncRoleMetadata(serverLink, roleLink, roleLink.priority);
 
+		const roleLinks = await this.roleLinks
+			.find({
+				serverLinkId: getServerLinkIdFilter(serverLink._id),
+			})
+			.toArray();
+
 		const userLinks = await this.userLinks
 			.find({
 				serverLinkId: getServerLinkIdFilter(serverLink._id),
@@ -269,6 +402,253 @@ export class SyncService {
 				snapshots,
 			);
 		}
+
+		const channelLinks = await this.channelLinks
+			.find({
+				serverLinkId: getServerLinkIdFilter(serverLink._id),
+			})
+			.toArray();
+
+		for (const channelLink of channelLinks) {
+			await this.syncLinkedChannel(serverLink, channelLink, roleLinks);
+		}
+	}
+
+	async syncLinkedChannel(
+		serverLink,
+		channelLink,
+		roleLinks = null,
+		sourcePlatformOverride = null,
+	) {
+		const sourcePlatform = sourcePlatformOverride ?? channelLink.priority;
+		if (!isSupportedPlatform(sourcePlatform)) {
+			logger.warn("Skipped channel sync with unsupported source platform", {
+				sourcePlatform,
+				channelLinkId: String(channelLink._id),
+			});
+			return;
+		}
+
+		const targetPlatform = getOppositePlatform(sourcePlatform);
+
+		const sourceGuildId = getGuildIdForPlatform(serverLink, sourcePlatform);
+		const targetGuildId = getGuildIdForPlatform(serverLink, targetPlatform);
+
+		const sourceChannelId = getChannelIdForPlatform(
+			channelLink,
+			sourcePlatform,
+		);
+		const targetChannelId = getChannelIdForPlatform(
+			channelLink,
+			targetPlatform,
+		);
+
+		if (!sourceChannelId || !targetChannelId) {
+			logger.warn("Skipped channel sync with missing channel ID", {
+				sourcePlatform,
+				targetPlatform,
+				sourceGuildId,
+				targetGuildId,
+				sourceChannelId,
+				targetChannelId,
+			});
+			return;
+		}
+
+		const sourceTemplate = await this.platforms[
+			sourcePlatform
+		].getGuildChannelTemplate(sourceGuildId, sourceChannelId);
+
+		if (!sourceTemplate) {
+			logger.warn("Source channel not found during sync", {
+				sourcePlatform,
+				sourceGuildId,
+				sourceChannelId,
+			});
+			return;
+		}
+
+		const targetTemplate = await this.platforms[
+			targetPlatform
+		].getGuildChannelTemplate(targetGuildId, targetChannelId);
+
+		if (!targetTemplate) {
+			logger.warn("Target channel not found during sync", {
+				targetPlatform,
+				targetGuildId,
+				targetChannelId,
+			});
+			return;
+		}
+
+		if (sourceTemplate.kind !== targetTemplate.kind) {
+			logger.warn("Skipped channel sync because channel types differ", {
+				sourcePlatform,
+				targetPlatform,
+				sourceGuildId,
+				targetGuildId,
+				sourceChannelId,
+				targetChannelId,
+				sourceKind: sourceTemplate.kind,
+				targetKind: targetTemplate.kind,
+			});
+			return;
+		}
+
+		const linkedRoleLinks =
+			roleLinks ??
+			(await this.roleLinks
+				.find({
+					serverLinkId: getServerLinkIdFilter(serverLink._id),
+				})
+				.toArray());
+
+		const mappedParentId = await this.mapTargetParentId(
+			serverLink,
+			sourcePlatform,
+			targetPlatform,
+			sourceTemplate.parentId,
+			targetTemplate.parentId,
+		);
+
+		const mappedTemplate = {
+			...sourceTemplate,
+			parentId: mappedParentId,
+			permissionOverwrites: this.buildTargetPermissionOverwrites(
+				serverLink,
+				linkedRoleLinks,
+				sourceTemplate,
+				targetTemplate,
+				sourcePlatform,
+				targetPlatform,
+			),
+		};
+
+		if (channelTemplatesEqual(mappedTemplate, targetTemplate)) {
+			return;
+		}
+
+		const canManageTarget = await this.platforms[
+			targetPlatform
+		].canManageChannel(targetGuildId, targetChannelId);
+
+		if (!canManageTarget) {
+			logger.warn("Target channel is not manageable", {
+				targetPlatform,
+				targetGuildId,
+				targetChannelId,
+			});
+			return;
+		}
+
+		this.guard.mark(
+			targetPlatform,
+			"channel",
+			targetGuildId,
+			targetChannelId,
+		);
+
+		const updated = await this.platforms[
+			targetPlatform
+		].updateGuildChannelFromTemplate(
+			targetGuildId,
+			targetChannelId,
+			mappedTemplate,
+		);
+
+		if (!updated) {
+			logger.warn("Failed to update target channel", {
+				targetPlatform,
+				targetGuildId,
+				targetChannelId,
+			});
+		}
+	}
+
+	async mapTargetParentId(
+		serverLink,
+		sourcePlatform,
+		targetPlatform,
+		sourceParentId,
+		targetParentId,
+	) {
+		if (!sourceParentId) {
+			return null;
+		}
+
+		const sourceField = getChannelFieldForPlatform(sourcePlatform);
+		const targetField = getChannelFieldForPlatform(targetPlatform);
+		const parentLink = await this.channelLinks.findOne({
+			serverLinkId: getServerLinkIdFilter(serverLink._id),
+			[sourceField]: sourceParentId,
+		});
+
+		return parentLink?.[targetField] ?? targetParentId ?? null;
+	}
+
+	buildTargetPermissionOverwrites(
+		serverLink,
+		roleLinks,
+		sourceTemplate,
+		targetTemplate,
+		sourcePlatform,
+		targetPlatform,
+	) {
+		const sourceGuildId = getGuildIdForPlatform(serverLink, sourcePlatform);
+		const targetGuildId = getGuildIdForPlatform(serverLink, targetPlatform);
+		const sourceToTargetRoleIds = new Map();
+		const controlledTargetRoleIds = new Set([targetGuildId]);
+
+		for (const roleLink of roleLinks) {
+			const sourceRoleId = getRoleIdForPlatform(roleLink, sourcePlatform);
+			const targetRoleId = getRoleIdForPlatform(roleLink, targetPlatform);
+
+			if (!sourceRoleId || !targetRoleId) {
+				continue;
+			}
+
+			sourceToTargetRoleIds.set(sourceRoleId, targetRoleId);
+			controlledTargetRoleIds.add(targetRoleId);
+		}
+
+		const mappedSourceOverwrites = [];
+		for (const overwrite of normalizePermissionOverwrites(
+			sourceTemplate.permissionOverwrites,
+		)) {
+			if (overwrite.type !== "role") {
+				continue;
+			}
+
+			const targetRoleId =
+				overwrite.id === sourceGuildId
+					? targetGuildId
+					: sourceToTargetRoleIds.get(overwrite.id);
+
+			if (!targetRoleId) {
+				continue;
+			}
+
+			mappedSourceOverwrites.push({
+				...overwrite,
+				id: targetRoleId,
+				type: "role",
+			});
+		}
+
+		const preservedTargetOverwrites = normalizePermissionOverwrites(
+			targetTemplate.permissionOverwrites,
+		).filter((overwrite) => {
+			if (overwrite.type !== "role") {
+				return true;
+			}
+
+			return !controlledTargetRoleIds.has(overwrite.id);
+		});
+
+		return normalizePermissionOverwrites([
+			...preservedTargetOverwrites,
+			...mappedSourceOverwrites,
+		]);
 	}
 
 	async handleLiveRoleUpdate(event) {
@@ -314,6 +694,64 @@ export class SyncService {
 				platform: event.platform,
 				guildId: event.guildId,
 				roleId: event.roleId,
+				error: error.message,
+				stack: error.stack,
+			});
+		}
+	}
+
+	async handleLiveChannelUpdate(event) {
+		try {
+			if (
+				this.guard.shouldSkip(
+					event.platform,
+					"channel",
+					event.guildId,
+					event.channelId,
+				)
+			) {
+				return;
+			}
+
+			const serverLink = await this.findServerLink(
+				event.platform,
+				event.guildId,
+			);
+			if (!serverLink) {
+				return;
+			}
+
+			const channelField = getChannelFieldForPlatform(event.platform);
+			const channelLinks = await this.channelLinks
+				.find({
+					serverLinkId: getServerLinkIdFilter(serverLink._id),
+					[channelField]: event.channelId,
+				})
+				.toArray();
+
+			if (channelLinks.length === 0) {
+				return;
+			}
+
+			const roleLinks = await this.roleLinks
+				.find({
+					serverLinkId: getServerLinkIdFilter(serverLink._id),
+				})
+				.toArray();
+
+			for (const channelLink of channelLinks) {
+				await this.syncLinkedChannel(
+					serverLink,
+					channelLink,
+					roleLinks,
+					event.platform,
+				);
+			}
+		} catch (error) {
+			logger.error("Live channel sync failed", {
+				platform: event.platform,
+				guildId: event.guildId,
+				channelId: event.channelId,
 				error: error.message,
 				stack: error.stack,
 			});
