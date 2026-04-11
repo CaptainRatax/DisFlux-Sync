@@ -3,7 +3,6 @@
 // Licensed under the GNU Affero General Public License v3.0 or later
 // See the LICENSE file for details.
 
-import { ChannelType, PermissionsBitField } from "discord.js";
 import {
 	sanitizeMongoObjectId,
 	sanitizePlatformId,
@@ -103,6 +102,42 @@ function formatChannelTypeLabel(kind) {
 		return "category";
 	}
 	return "unknown";
+}
+function getServerLinkIdQuery(serverLinkId) {
+	const values = [];
+
+	if (serverLinkId !== null && serverLinkId !== undefined) {
+		values.push(serverLinkId);
+		const stringId = String(serverLinkId);
+		if (stringId && !values.includes(stringId)) {
+			values.push(stringId);
+		}
+	}
+
+	if (values.length === 1) {
+		return { $eq: values[0] };
+	}
+
+	return { $in: values };
+}
+function formatUserSyncResultLines(syncResult) {
+	if (!syncResult) {
+		return [];
+	}
+
+	const membershipSummary = syncResult.membershipSummary ?? {};
+
+	return [
+		...(syncResult.skippedFluxerOwner
+			? ["Sync skipped: `Fluxer owner cannot be synchronized`"]
+			: []),
+		`Member snapshots fetched: \`${!syncResult.skipped}\``,
+		`Linked roles checked: \`${syncResult.roleLinkCount}\``,
+		`Role membership differences: \`${membershipSummary.differences ?? 0}\``,
+		`Role membership changes applied: \`${membershipSummary.changed ?? 0}\``,
+		`Role membership changes failed: \`${membershipSummary.failed ?? 0}\``,
+		`Role/member permission skips: \`${(membershipSummary.skippedUnmanageableRoles ?? 0) + (membershipSummary.skippedUnmanageableMembers ?? 0)}\``,
+	];
 }
 export class LinkService {
 	constructor({ mongo, platforms, botPrefix, syncService = null }) {
@@ -554,6 +589,16 @@ export class LinkService {
 			);
 			return;
 		}
+		const fluxerUserIsOwner = await this.platforms.fluxer.isGuildOwner(
+			base.serverLink.fluxerGuildId,
+			fluxerUserId,
+		);
+		if (fluxerUserIsOwner) {
+			await context.reply(
+				"Fluxer does not allow anyone to manage the server owner, so that Fluxer owner's data cannot be synchronized. You can still sync a Discord owner if the linked Fluxer user is not the Fluxer owner.",
+			);
+			return;
+		}
 		const existingDiscordSide = await this.userLinks.findOne({
 			serverLinkId: { $eq: base.serverLinkId },
 			discordUserId: { $eq: discordUserId },
@@ -580,9 +625,9 @@ export class LinkService {
 		const result = await this.userLinks.insertOne(userLink);
 		userLink._id = result.insertedId;
 
-		if (this.syncService) {
-			await this.syncService.syncLinkedUser(base.serverLink, userLink);
-		}
+		const syncResult = this.syncService
+			? await this.syncService.syncLinkedUser(base.serverLink, userLink)
+			: null;
 
 		await context.reply(
 			[
@@ -590,6 +635,104 @@ export class LinkService {
 				`Priority: \`${priority}\``,
 				`Discord user ID: \`${discordUserId}\``,
 				`Fluxer user ID: \`${fluxerUserId}\``,
+				...formatUserSyncResultLines(syncResult),
+			].join("\n"),
+		);
+	}
+	async handleSyncUser(context, platformRaw, userRaw) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		const platform = normalizePlatform(platformRaw);
+		const userId = normalizeId(userRaw);
+		if (!platform || !userId) {
+			await context.reply(
+				`Usage: ${this.botPrefix}sync-user <discord|fluxer> <user-id>`,
+			);
+			return;
+		}
+		if (!this.syncService) {
+			await context.reply("Sync service is not available.");
+			return;
+		}
+		const fieldName = getUserFieldName(platform);
+		const userLink = await this.userLinks.findOne({
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
+			[fieldName]: { $eq: userId },
+		});
+		if (!userLink) {
+			await context.reply(
+				`No user link found for that ${formatPlatformLabel(platform)} user.`,
+			);
+			return;
+		}
+		const syncResult = await this.syncService.syncLinkedUser(
+			base.serverLink,
+			userLink,
+		);
+		await context.reply(
+			[
+				"User sync completed.",
+				`Discord user ID: \`${userLink.discordUserId}\``,
+				`Fluxer user ID: \`${userLink.fluxerUserId}\``,
+				...formatUserSyncResultLines(syncResult),
+			].join("\n"),
+		);
+	}
+	async handleResyncUsers(context) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		if (!this.syncService) {
+			await context.reply("Sync service is not available.");
+			return;
+		}
+		const userLinks = await this.userLinks
+			.find({ serverLinkId: getServerLinkIdQuery(base.serverLinkId) })
+			.toArray();
+		if (userLinks.length === 0) {
+			await context.reply(
+				"There are no linked users for this server pair.",
+			);
+			return;
+		}
+		let skippedFluxerOwners = 0;
+		const totals = {
+			roleLinksChecked: 0,
+			differences: 0,
+			changed: 0,
+			failed: 0,
+			permissionSkips: 0,
+		};
+		for (const userLink of userLinks) {
+			const syncResult = await this.syncService.syncLinkedUser(
+				base.serverLink,
+				userLink,
+			);
+			const summary = syncResult?.membershipSummary ?? {};
+			if (syncResult?.skippedFluxerOwner) {
+				skippedFluxerOwners += 1;
+			}
+			totals.roleLinksChecked += syncResult?.roleLinkCount ?? 0;
+			totals.differences += summary.differences ?? 0;
+			totals.changed += summary.changed ?? 0;
+			totals.failed += summary.failed ?? 0;
+			totals.permissionSkips +=
+				(summary.skippedUnmanageableRoles ?? 0) +
+				(summary.skippedUnmanageableMembers ?? 0);
+		}
+		await context.reply(
+			[
+				"User resync completed.",
+				`Users checked: \`${userLinks.length}\``,
+				`Fluxer owners skipped: \`${skippedFluxerOwners}\``,
+				`Linked roles checked: \`${totals.roleLinksChecked}\``,
+				`Role membership differences: \`${totals.differences}\``,
+				`Role membership changes applied: \`${totals.changed}\``,
+				`Role membership changes failed: \`${totals.failed}\``,
+				`Role/member permission skips: \`${totals.permissionSkips}\``,
 			].join("\n"),
 		);
 	}

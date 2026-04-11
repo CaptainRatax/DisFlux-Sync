@@ -5,6 +5,7 @@
 
 import { logger } from "../core/logger.js";
 import { OperationGuard } from "../core/operationGuard.js";
+import { sanitizeMongoObjectId } from "../utils/sanitize.js";
 
 function getOppositePlatform(platform) {
 	if (platform === "discord") {
@@ -67,6 +68,61 @@ function normalizeNick(value) {
 	return String(value);
 }
 
+function normalizeMemberSnapshot(snapshot) {
+	if (
+		!snapshot ||
+		!snapshot.roleIds ||
+		typeof snapshot.roleIds[Symbol.iterator] !== "function"
+	) {
+		return null;
+	}
+
+	return {
+		userId: snapshot.userId ?? null,
+		nick: snapshot.nick ?? null,
+		roleIds: new Set(snapshot.roleIds ?? []),
+	};
+}
+
+function getServerLinkIdValues(serverLinkId) {
+	const values = [];
+	const objectId = sanitizeMongoObjectId(serverLinkId);
+
+	if (objectId) {
+		values.push(objectId);
+	}
+
+	if (serverLinkId !== null && serverLinkId !== undefined) {
+		const stringId = String(serverLinkId);
+		if (stringId) {
+			values.push(stringId);
+		}
+	}
+
+	return values;
+}
+
+function getServerLinkIdFilter(serverLinkId) {
+	const values = getServerLinkIdValues(serverLinkId);
+
+	if (values.length === 1) {
+		return values[0];
+	}
+
+	return { $in: values };
+}
+
+function createRoleMembershipSummary() {
+	return {
+		checked: 0,
+		differences: 0,
+		changed: 0,
+		skippedUnmanageableRoles: 0,
+		skippedUnmanageableMembers: 0,
+		failed: 0,
+	};
+}
+
 export class SyncService {
 	constructor({ mongo, platforms }) {
 		this.serverLinks = mongo.collection("server_links");
@@ -112,15 +168,17 @@ export class SyncService {
 	}
 
 	async reconcileServerLink(serverLink) {
+		const serverLinkIdFilter = getServerLinkIdFilter(serverLink._id);
+
 		const roleLinks = await this.roleLinks
 			.find({
-				serverLinkId: serverLink._id,
+				serverLinkId: serverLinkIdFilter,
 			})
 			.toArray();
 
 		const userLinks = await this.userLinks
 			.find({
-				serverLinkId: serverLink._id,
+				serverLinkId: serverLinkIdFilter,
 			})
 			.toArray();
 
@@ -142,14 +200,27 @@ export class SyncService {
 			roleLinks ??
 			(await this.roleLinks
 				.find({
-					serverLinkId: serverLink._id,
+					serverLinkId: getServerLinkIdFilter(serverLink._id),
 				})
 				.toArray());
+
+		if (await this.isFluxerOwnerLinkedUser(serverLink, userLink)) {
+			return {
+				roleLinkCount: linkedRoleLinks.length,
+				membershipSummary: createRoleMembershipSummary(),
+				skipped: true,
+				skippedFluxerOwner: true,
+			};
+		}
 
 		const snapshots = await this.fetchUserSnapshots(serverLink, userLink);
 
 		if (!snapshots) {
-			return;
+			return {
+				roleLinkCount: linkedRoleLinks.length,
+				membershipSummary: createRoleMembershipSummary(),
+				skipped: true,
+			};
 		}
 
 		await this.syncNickname(
@@ -158,13 +229,18 @@ export class SyncService {
 			userLink.priority,
 			snapshots,
 		);
-		await this.syncRoleMemberships(
+		const membershipSummary = await this.syncRoleMemberships(
 			serverLink,
 			userLink,
 			linkedRoleLinks,
-			(roleLink) => roleLink.priority,
+			() => userLink.priority,
 			snapshots,
 		);
+
+		return {
+			roleLinkCount: linkedRoleLinks.length,
+			membershipSummary,
+		};
 	}
 
 	async syncLinkedRoleAcrossUsers(serverLink, roleLink) {
@@ -172,11 +248,15 @@ export class SyncService {
 
 		const userLinks = await this.userLinks
 			.find({
-				serverLinkId: serverLink._id,
+				serverLinkId: getServerLinkIdFilter(serverLink._id),
 			})
 			.toArray();
 
 		for (const userLink of userLinks) {
+			if (await this.isFluxerOwnerLinkedUser(serverLink, userLink)) {
+				continue;
+			}
+
 			const snapshots = await this.fetchUserSnapshots(serverLink, userLink);
 			if (!snapshots) {
 				continue;
@@ -186,7 +266,7 @@ export class SyncService {
 				serverLink,
 				userLink,
 				[roleLink],
-				() => roleLink.priority,
+				() => userLink.priority,
 				snapshots,
 			);
 		}
@@ -218,7 +298,7 @@ export class SyncService {
 
 			const roleLinks = await this.roleLinks
 				.find({
-					serverLinkId: serverLink._id,
+					serverLinkId: getServerLinkIdFilter(serverLink._id),
 					[roleField]: event.roleId,
 				})
 				.toArray();
@@ -267,7 +347,7 @@ export class SyncService {
 
 			const userLinks = await this.userLinks
 				.find({
-					serverLinkId: serverLink._id,
+					serverLinkId: getServerLinkIdFilter(serverLink._id),
 					[userField]: event.userId,
 				})
 				.toArray();
@@ -278,11 +358,15 @@ export class SyncService {
 
 			const roleLinks = await this.roleLinks
 				.find({
-					serverLinkId: serverLink._id,
+					serverLinkId: getServerLinkIdFilter(serverLink._id),
 				})
 				.toArray();
 
 			for (const userLink of userLinks) {
+				if (await this.isFluxerOwnerLinkedUser(serverLink, userLink)) {
+					continue;
+				}
+
 				const snapshots = await this.fetchUserSnapshots(
 					serverLink,
 					userLink,
@@ -290,6 +374,19 @@ export class SyncService {
 
 				if (!snapshots) {
 					continue;
+				}
+
+				const sourceEventSnapshot = normalizeMemberSnapshot(
+					event.snapshot,
+				);
+				if (sourceEventSnapshot) {
+					snapshots[event.platform] = {
+						...snapshots[event.platform],
+						userId:
+							sourceEventSnapshot.userId ??
+							snapshots[event.platform].userId,
+						roleIds: sourceEventSnapshot.roleIds,
+					};
 				}
 
 				await this.syncNickname(
@@ -455,14 +552,15 @@ export class SyncService {
 	) {
 		const discordSnapshot = snapshots.discord;
 		const fluxerSnapshot = snapshots.fluxer;
+		const summary = createRoleMembershipSummary();
 
 		if (!discordSnapshot || !fluxerSnapshot) {
-			return;
+			return summary;
 		}
 
-		const manageableCache = new Map();
-
 		for (const roleLink of roleLinks) {
+			summary.checked += 1;
+
 			const sourcePlatform = sourcePlatformResolver(roleLink);
 			const targetPlatform = getOppositePlatform(sourcePlatform);
 
@@ -484,33 +582,7 @@ export class SyncService {
 			const sourceSnapshot = snapshots[sourcePlatform];
 			const targetSnapshot = snapshots[targetPlatform];
 
-			if (
-				!sourceSnapshot.roleIds.has(sourceRoleId) &&
-				!targetSnapshot.roleIds.has(targetRoleId)
-			) {
-				continue;
-			}
-
-			const targetCanManageRole = await this.platforms[
-				targetPlatform
-			].canManageRole(targetGuildId, targetRoleId);
-
-			if (!targetCanManageRole) {
-				continue;
-			}
-
-			const manageableKey = `${targetPlatform}:${targetGuildId}:${targetUserId}`;
-			let targetCanManageMember = manageableCache.get(manageableKey);
-
-			if (targetCanManageMember === undefined) {
-				targetCanManageMember = await this.platforms[
-					targetPlatform
-				].canManageMember(targetGuildId, targetUserId);
-
-				manageableCache.set(manageableKey, targetCanManageMember);
-			}
-
-			if (!targetCanManageMember) {
+			if (!sourceSnapshot || !targetSnapshot) {
 				continue;
 			}
 
@@ -518,6 +590,28 @@ export class SyncService {
 			const targetHasRole = targetSnapshot.roleIds.has(targetRoleId);
 
 			if (sourceHasRole === targetHasRole) {
+				continue;
+			}
+
+			summary.differences += 1;
+
+			const targetCanManageRole = await this.platforms[
+				targetPlatform
+			].canManageRole(targetGuildId, targetRoleId);
+
+			if (!targetCanManageRole) {
+				summary.skippedUnmanageableRoles += 1;
+				logger.warn("Target role is not manageable for membership sync", {
+					sourcePlatform,
+					targetPlatform,
+					sourceGuildId,
+					targetGuildId,
+					sourceUserId,
+					targetUserId,
+					sourceRoleId,
+					targetRoleId,
+					action: sourceHasRole ? "add" : "remove",
+				});
 				continue;
 			}
 
@@ -539,6 +633,7 @@ export class SyncService {
 
 				if (changed) {
 					targetSnapshot.roleIds.add(targetRoleId);
+					summary.changed += 1;
 				}
 			} else {
 				changed = await this.platforms[targetPlatform].removeMemberRole(
@@ -549,10 +644,12 @@ export class SyncService {
 
 				if (changed) {
 					targetSnapshot.roleIds.delete(targetRoleId);
+					summary.changed += 1;
 				}
 			}
 
 			if (!changed) {
+				summary.failed += 1;
 				logger.warn("Failed to sync linked role membership", {
 					sourcePlatform,
 					targetPlatform,
@@ -565,6 +662,8 @@ export class SyncService {
 				});
 			}
 		}
+
+		return summary;
 	}
 
 	async fetchUserSnapshots(serverLink, userLink) {
@@ -595,6 +694,25 @@ export class SyncService {
 			discord: discordSnapshot,
 			fluxer: fluxerSnapshot,
 		};
+	}
+
+	async isFluxerOwnerLinkedUser(serverLink, userLink) {
+		const isOwner = await this.platforms.fluxer.isGuildOwner(
+			serverLink.fluxerGuildId,
+			userLink.fluxerUserId,
+		);
+
+		if (isOwner) {
+			logger.warn("Skipped linked user sync because Fluxer owner cannot be synchronized", {
+				serverLinkId: String(serverLink._id),
+				discordGuildId: serverLink.discordGuildId,
+				fluxerGuildId: serverLink.fluxerGuildId,
+				discordUserId: userLink.discordUserId,
+				fluxerUserId: userLink.fluxerUserId,
+			});
+		}
+
+		return isOwner;
 	}
 
 	async findServerLink(platform, guildId) {

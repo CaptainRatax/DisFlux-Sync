@@ -58,6 +58,23 @@ function buildEmbed({ title, description, fields = [], footerText }) {
 	}
 	return embed;
 }
+function getServerLinkIdQuery(serverLinkId) {
+	const values = [];
+
+	if (serverLinkId !== null && serverLinkId !== undefined) {
+		values.push(serverLinkId);
+		const stringId = String(serverLinkId);
+		if (stringId && !values.includes(stringId)) {
+			values.push(stringId);
+		}
+	}
+
+	if (values.length === 1) {
+		return { $eq: values[0] };
+	}
+
+	return { $in: values };
+}
 export class InfoService {
 	constructor({ mongo, platforms, botPrefix }) {
 		this.serverLinks = mongo.collection("server_links");
@@ -114,6 +131,16 @@ export class InfoService {
 					].join("\n"),
 				},
 				{
+					name: "Manual sync",
+					value: [
+						`\`${this.botPrefix}sync-user <discord|fluxer> <user-id>\``,
+						"Resyncs one linked user.",
+						"",
+						`\`${this.botPrefix}resync-users\``,
+						"Resyncs all linked users in this server pair.",
+					].join("\n"),
+				},
+				{
 					name: "Flags for link-channel",
 					value: [
 						"4th extra argument: sync other bot messages",
@@ -146,7 +173,7 @@ export class InfoService {
 			return;
 		}
 		const links = await this.channelLinks
-			.find({ serverLinkId: base.serverLink._id })
+			.find({ serverLinkId: getServerLinkIdQuery(base.serverLink._id) })
 			.toArray();
 		if (links.length === 0) {
 			await context.reply({
@@ -220,7 +247,7 @@ export class InfoService {
 			return;
 		}
 		const links = await this.roleLinks
-			.find({ serverLinkId: base.serverLink._id })
+			.find({ serverLinkId: getServerLinkIdQuery(base.serverLink._id) })
 			.toArray();
 		if (links.length === 0) {
 			await context.reply({
@@ -292,7 +319,7 @@ export class InfoService {
 			return;
 		}
 		const links = await this.userLinks
-			.find({ serverLinkId: base.serverLink._id })
+			.find({ serverLinkId: getServerLinkIdQuery(base.serverLink._id) })
 			.toArray();
 		if (links.length === 0) {
 			await context.reply({
@@ -323,20 +350,26 @@ export class InfoService {
 		);
 		const fields = [];
 		for (const [index, link] of pageItems.entries()) {
-			const [discordMember, fluxerMember] = await Promise.all([
-				this.platforms.discord.fetchGuildMember(
-					base.serverLink.discordGuildId,
-					link.discordUserId,
-				),
-				this.platforms.fluxer.fetchGuildMember(
-					base.serverLink.fluxerGuildId,
-					link.fluxerUserId,
-				),
-			]);
+			const [discordMember, fluxerMember, fluxerUserIsOwner] =
+				await Promise.all([
+					this.platforms.discord.fetchGuildMember(
+						base.serverLink.discordGuildId,
+						link.discordUserId,
+					),
+					this.platforms.fluxer.fetchGuildMember(
+						base.serverLink.fluxerGuildId,
+						link.fluxerUserId,
+					),
+					this.platforms.fluxer.isGuildOwner(
+						base.serverLink.fluxerGuildId,
+						link.fluxerUserId,
+					),
+				]);
 			fields.push({
 				name: `${(page - 1) * this.itemsPerPage + index + 1}. ${truncate(getDiscordMemberLabel(discordMember, link.discordUserId))} <-> ${truncate(getFluxerMemberLabel(fluxerMember, link.fluxerUserId))}`,
 				value: [
 					`Priority: \`${link.priority}\``,
+					`Status: \`${fluxerUserIsOwner ? "sync disabled - Fluxer owner" : "active"}\``,
 					`Discord: \`${link.discordUserId}\``,
 					`Fluxer: \`${link.fluxerUserId}\``,
 				].join("\n"),

@@ -69,6 +69,21 @@ export function bindCommandDispatcher({
 				);
 				return;
 			}
+			if (parsed.name === "sync-user" || parsed.name === "syncuser") {
+				await linkService.handleSyncUser(
+					context,
+					parsed.args[0],
+					parsed.args[1],
+				);
+				return;
+			}
+			if (
+				parsed.name === "resync-users" ||
+				parsed.name === "resyncusers"
+			) {
+				await linkService.handleResyncUsers(context);
+				return;
+			}
 			if (
 				parsed.name === "unlink-channel" ||
 				parsed.name === "unlinkchannel"

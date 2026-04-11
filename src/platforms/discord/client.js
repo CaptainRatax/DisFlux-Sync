@@ -48,6 +48,19 @@ function normalizeReplyPayload(payload) {
 	}
 	return payload ?? {};
 }
+function buildMemberSnapshot(member) {
+	const roleIds = new Set(
+		[...member.roles.cache.keys()].filter(
+			(roleId) => roleId !== member.guild.id,
+		),
+	);
+
+	return {
+		userId: member.id,
+		nick: member.nickname ?? null,
+		roleIds,
+	};
+}
 export class DiscordPlatform extends EventEmitter {
 	constructor(token) {
 		super();
@@ -215,6 +228,7 @@ export class DiscordPlatform extends EventEmitter {
 					platform: "discord",
 					guildId: newMember.guild.id,
 					userId: newMember.id,
+					snapshot: buildMemberSnapshot(newMember),
 				});
 			},
 		);
@@ -470,12 +484,7 @@ export class DiscordPlatform extends EventEmitter {
 		if (!member) {
 			return null;
 		}
-		const roleIds = new Set(
-			[...member.roles.cache.keys()].filter(
-				(roleId) => roleId !== guildId,
-			),
-		);
-		return { userId: member.id, nick: member.nickname ?? null, roleIds };
+		return buildMemberSnapshot(member);
 	}
 	async canManageMember(guildId, userId) {
 		const member = await this.fetchGuildMember(guildId, userId);
@@ -499,26 +508,38 @@ export class DiscordPlatform extends EventEmitter {
 	async addMemberRole(guildId, userId, roleId) {
 		const member = await this.fetchGuildMember(guildId, userId);
 		const role = await this.fetchGuildRole(guildId, roleId);
-		if (!member || !role || !member.manageable || !role.editable) {
+		if (!member || !role || !role.editable) {
 			return false;
 		}
 		try {
 			await member.roles.add(roleId);
 			return true;
-		} catch {
+		} catch (error) {
+			logger.warn("Failed to add Discord member role", {
+				guildId,
+				userId,
+				roleId,
+				error: error.message,
+			});
 			return false;
 		}
 	}
 	async removeMemberRole(guildId, userId, roleId) {
 		const member = await this.fetchGuildMember(guildId, userId);
 		const role = await this.fetchGuildRole(guildId, roleId);
-		if (!member || !role || !member.manageable || !role.editable) {
+		if (!member || !role || !role.editable) {
 			return false;
 		}
 		try {
 			await member.roles.remove(roleId);
 			return true;
-		} catch {
+		} catch (error) {
+			logger.warn("Failed to remove Discord member role", {
+				guildId,
+				userId,
+				roleId,
+				error: error.message,
+			});
 			return false;
 		}
 	}
