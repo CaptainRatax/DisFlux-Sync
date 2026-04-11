@@ -171,7 +171,9 @@ export class DiscordPlatform extends EventEmitter {
 				return;
 			}
 			try {
-				await interaction.deferReply();
+				await interaction.deferReply({
+					ephemeral: interaction.commandName === "link-me",
+				});
 			} catch (error) {
 				logger.warn("Failed to defer Discord slash command", {
 					commandName: interaction.commandName,
@@ -807,6 +809,23 @@ export class DiscordPlatform extends EventEmitter {
 			return await channel.send(messagePayload);
 		} catch {
 			return null;
+		}
+	}
+	async sendDirectMessage(userId, payload) {
+		try {
+			const user = await this.client.users.fetch(userId);
+			if (!user) {
+				return false;
+			}
+			const normalized = normalizeReplyPayload(payload);
+			await user.send({
+				content: normalized.content ?? "",
+				embeds: normalized.embeds ?? undefined,
+				allowedMentions: normalized.allowedMentions ?? undefined,
+			});
+			return true;
+		} catch {
+			return false;
 		}
 	}
 	async editGuildMessage(channelId, messageId, payload) {

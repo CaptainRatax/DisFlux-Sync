@@ -35,6 +35,7 @@ Use the official hosted bots if you just want to set up synchronization for your
 - Channel linking with per-channel priority selection
 - Role linking with per-link priority selection
 - User linking with per-link priority selection
+- Self-service user linking with one-time DM codes
 - Real-time message synchronization between linked channels
 - Reply synchronization across both platforms
 - Role synchronization and nickname synchronization for linked users
@@ -231,6 +232,22 @@ Examples:
 
 ### 4. Link users
 
+Users can link their own accounts without administrator permission:
+
+```text
+.link-me
+```
+
+The bot sends a one-time code by DM. Then run the same command with the code in the linked server:
+
+```text
+.link-me <code>
+```
+
+The server where the code was created becomes the priority side for nickname and linked role membership sync.
+
+Administrators can also link users manually:
+
 ```text
 .link-user <priority: discord|fluxer> <discord-user-id> <fluxer-user-id>
 ```
@@ -293,6 +310,10 @@ Creates a role link. `priority` is the server to trust for role metadata. One si
 
 Creates a user link. `priority` is the server to trust for nickname and linked role membership sync.
 
+### `.link-me [code]`
+
+Starts or completes a self-service user link. Without a code, the bot sends a one-time code by DM. With a code, the bot consumes it in the other linked server and creates the user link.
+
 ### `.sync-user <platform: discord|fluxer> <user-id>`
 
 Manually resyncs one linked user. `platform` is the side where the user ID belongs.
@@ -350,7 +371,7 @@ DisFlux Sync currently supports real-time synchronization for supported linked e
 
 ## Important Notes
 
-- Only server administrators can use setup and link commands
+- Only server administrators can use setup and administrative link commands. `.link-me` is available to any user in a linked server.
 - The bot must have the permissions required to manage the linked resources
 - Some actions can fail safely if the target role or member is above the bot in the hierarchy
 - Unsupported content may be skipped or mirrored in a simplified form

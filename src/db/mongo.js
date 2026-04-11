@@ -70,6 +70,30 @@ export class MongoService {
 			},
 		);
 
+		await this.db.collection("pending_user_links").createIndex(
+			{ codeHash: 1 },
+			{
+				unique: true,
+				name: "uniq_pending_user_link_code_hash",
+			},
+		);
+
+		await this.db.collection("pending_user_links").createIndex(
+			{ serverLinkId: 1, sourcePlatform: 1, sourceUserId: 1 },
+			{
+				unique: true,
+				name: "uniq_pending_user_link_source",
+			},
+		);
+
+		await this.db.collection("pending_user_links").createIndex(
+			{ expiresAt: 1 },
+			{
+				expireAfterSeconds: 0,
+				name: "ttl_pending_user_link_expiration",
+			},
+		);
+
 		await this.db.collection("channel_links").createIndex(
 			{ serverLinkId: 1, discordChannelId: 1 },
 			{

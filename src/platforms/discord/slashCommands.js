@@ -28,6 +28,7 @@ const COMMAND_OPTION_ORDER = {
 	],
 	"link-role": ["priority", "discord-role-id", "fluxer-role-id"],
 	"link-user": ["priority", "discord-user-id", "fluxer-user-id"],
+	"link-me": ["code"],
 	"sync-user": ["platform", "user-id"],
 	"unlink-channel": ["platform", "channel-id"],
 	"unlink-role": ["platform", "role-id"],
@@ -188,6 +189,17 @@ export function buildDiscordSlashCommands() {
 				.setRequired(true),
 		);
 
+	const linkMe = createCommand({
+		name: "link-me",
+		description: "Start or complete your own user link.",
+		adminOnly: false,
+	}).addStringOption((option) =>
+		option
+			.setName("code")
+			.setDescription("User link code from your DM.")
+			.setRequired(false),
+	);
+
 	const syncUser = addPlatformOption(
 		createCommand({
 			name: "sync-user",
@@ -301,6 +313,7 @@ export function buildDiscordSlashCommands() {
 		linkChannel,
 		linkRole,
 		linkUser,
+		linkMe,
 		syncUser,
 		resyncUsers,
 		resyncRoles,

@@ -71,6 +71,15 @@ async function executeParsedCommand({
 		);
 		return true;
 	}
+	if (
+		parsed.name === "link-me" ||
+		parsed.name === "linkme" ||
+		parsed.name === "sync-me" ||
+		parsed.name === "syncme"
+	) {
+		await linkService.handleLinkMe(context, parsed.args[0]);
+		return true;
+	}
 	if (parsed.name === "sync-user" || parsed.name === "syncuser") {
 		await linkService.handleSyncUser(
 			context,

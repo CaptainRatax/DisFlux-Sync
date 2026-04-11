@@ -73,6 +73,8 @@ export class App {
 			platforms: this.platforms,
 			botPrefix: env.botPrefix,
 			syncService: this.syncService,
+			setupCodeLength: env.setupCodeLength,
+			setupCodeTtlMinutes: env.setupCodeTtlMinutes,
 		});
 
 		this.messageBridgeService = new MessageBridgeService({
