@@ -104,6 +104,13 @@ function setDefined(target, key, value) {
 		target[key] = value;
 	}
 }
+function buildDiscordRoleColors(primaryColor) {
+	return {
+		primaryColor: primaryColor ?? 0,
+		secondaryColor: null,
+		tertiaryColor: null,
+	};
+}
 function isChannelManageable(channel) {
 	try {
 		return Boolean(channel?.manageable);
@@ -650,7 +657,7 @@ export class DiscordPlatform extends EventEmitter {
 		}
 		return {
 			name: role.name,
-			color: role.color ?? 0,
+			color: role.colors?.primaryColor ?? 0,
 			permissions: role.permissions.bitfield.toString(),
 			hoist: role.hoist ?? false,
 			mentionable: role.mentionable ?? false,
@@ -664,7 +671,7 @@ export class DiscordPlatform extends EventEmitter {
 		try {
 			return await guild.roles.create({
 				name: template.name,
-				color: template.color ?? 0,
+				colors: buildDiscordRoleColors(template.color),
 				permissions: new PermissionsBitField(
 					BigInt(template.permissions ?? "0"),
 				),
@@ -683,7 +690,7 @@ export class DiscordPlatform extends EventEmitter {
 		try {
 			return await role.edit({
 				name: template.name,
-				color: template.color ?? 0,
+				colors: buildDiscordRoleColors(template.color),
 				permissions: new PermissionsBitField(
 					BigInt(template.permissions ?? "0"),
 				),
