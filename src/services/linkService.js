@@ -3,7 +3,6 @@
 // Licensed under the GNU Affero General Public License v3.0 or later
 // See the LICENSE file for details.
 
-import { ChannelType, PermissionsBitField } from "discord.js";
 import {
 	sanitizeMongoObjectId,
 	sanitizePlatformId,
@@ -103,6 +102,57 @@ function formatChannelTypeLabel(kind) {
 		return "category";
 	}
 	return "unknown";
+}
+function getServerLinkIdQuery(serverLinkId) {
+	const values = [];
+	function addValue(value) {
+		if (value === null || value === undefined) {
+			return;
+		}
+		if (
+			values.some(function valueMatches(existing) {
+				return (
+					typeof existing === typeof value &&
+					String(existing) === String(value)
+				);
+			})
+		) {
+			return;
+		}
+		values.push(value);
+	}
+
+	addValue(sanitizeMongoObjectId(serverLinkId));
+
+	if (serverLinkId !== null && serverLinkId !== undefined) {
+		addValue(serverLinkId);
+		addValue(String(serverLinkId));
+	}
+
+	if (values.length === 1) {
+		return { $eq: values[0] };
+	}
+
+	return { $in: values };
+}
+function formatUserSyncResultLines(syncResult) {
+	if (!syncResult) {
+		return [];
+	}
+
+	const membershipSummary = syncResult.membershipSummary ?? {};
+
+	return [
+		...(syncResult.skippedFluxerOwner
+			? ["Sync skipped: `Fluxer owner cannot be synchronized`"]
+			: []),
+		`Member snapshots fetched: \`${!syncResult.skipped}\``,
+		`Linked roles checked: \`${syncResult.roleLinkCount}\``,
+		`Role membership differences: \`${membershipSummary.differences ?? 0}\``,
+		`Role membership changes applied: \`${membershipSummary.changed ?? 0}\``,
+		`Role membership changes failed: \`${membershipSummary.failed ?? 0}\``,
+		`Role permission skips: \`${membershipSummary.skippedUnmanageableRoles ?? 0}\``,
+	];
 }
 export class LinkService {
 	constructor({ mongo, platforms, botPrefix, syncService = null }) {
@@ -275,11 +325,11 @@ export class LinkService {
 			discordChannel = created;
 		}
 		const existingDiscordSide = await this.channelLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			discordChannelId: { $eq: discordChannelId },
 		});
 		const existingFluxerSide = await this.channelLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			fluxerChannelId: { $eq: fluxerChannelId },
 		});
 		if (
@@ -390,7 +440,7 @@ export class LinkService {
 				return;
 			}
 			const existing = await this.roleLinks.findOne({
-				serverLinkId: { $eq: base.serverLinkId },
+				serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 				discordRoleId: { $eq: discordRoleId },
 			});
 			if (existing) {
@@ -420,7 +470,7 @@ export class LinkService {
 				return;
 			}
 			const existing = await this.roleLinks.findOne({
-				serverLinkId: { $eq: base.serverLinkId },
+				serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 				fluxerRoleId: { $eq: fluxerRoleId },
 			});
 			if (existing) {
@@ -554,8 +604,18 @@ export class LinkService {
 			);
 			return;
 		}
+		const fluxerUserIsOwner = await this.platforms.fluxer.isGuildOwner(
+			base.serverLink.fluxerGuildId,
+			fluxerUserId,
+		);
+		if (fluxerUserIsOwner) {
+			await context.reply(
+				"Fluxer does not allow anyone to manage the server owner, so that Fluxer owner's data cannot be synchronized. You can still sync a Discord owner if the linked Fluxer user is not the Fluxer owner.",
+			);
+			return;
+		}
 		const existingDiscordSide = await this.userLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			discordUserId: { $eq: discordUserId },
 		});
 		if (existingDiscordSide) {
@@ -563,7 +623,7 @@ export class LinkService {
 			return;
 		}
 		const existingFluxerSide = await this.userLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			fluxerUserId: { $eq: fluxerUserId },
 		});
 		if (existingFluxerSide) {
@@ -580,9 +640,9 @@ export class LinkService {
 		const result = await this.userLinks.insertOne(userLink);
 		userLink._id = result.insertedId;
 
-		if (this.syncService) {
-			await this.syncService.syncLinkedUser(base.serverLink, userLink);
-		}
+		const syncResult = this.syncService
+			? await this.syncService.syncLinkedUser(base.serverLink, userLink)
+			: null;
 
 		await context.reply(
 			[
@@ -590,6 +650,102 @@ export class LinkService {
 				`Priority: \`${priority}\``,
 				`Discord user ID: \`${discordUserId}\``,
 				`Fluxer user ID: \`${fluxerUserId}\``,
+				...formatUserSyncResultLines(syncResult),
+			].join("\n"),
+		);
+	}
+	async handleSyncUser(context, platformRaw, userRaw) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		const platform = normalizePlatform(platformRaw);
+		const userId = normalizeId(userRaw);
+		if (!platform || !userId) {
+			await context.reply(
+				`Usage: ${this.botPrefix}sync-user <discord|fluxer> <user-id>`,
+			);
+			return;
+		}
+		if (!this.syncService) {
+			await context.reply("Sync service is not available.");
+			return;
+		}
+		const fieldName = getUserFieldName(platform);
+		const userLink = await this.userLinks.findOne({
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
+			[fieldName]: { $eq: userId },
+		});
+		if (!userLink) {
+			await context.reply(
+				`No user link found for that ${formatPlatformLabel(platform)} user.`,
+			);
+			return;
+		}
+		const syncResult = await this.syncService.syncLinkedUser(
+			base.serverLink,
+			userLink,
+		);
+		await context.reply(
+			[
+				"User sync completed.",
+				`Discord user ID: \`${userLink.discordUserId}\``,
+				`Fluxer user ID: \`${userLink.fluxerUserId}\``,
+				...formatUserSyncResultLines(syncResult),
+			].join("\n"),
+		);
+	}
+	async handleResyncUsers(context) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		if (!this.syncService) {
+			await context.reply("Sync service is not available.");
+			return;
+		}
+		const userLinks = await this.userLinks
+			.find({ serverLinkId: getServerLinkIdQuery(base.serverLinkId) })
+			.toArray();
+		if (userLinks.length === 0) {
+			await context.reply(
+				"There are no linked users for this server pair.",
+			);
+			return;
+		}
+		let skippedFluxerOwners = 0;
+		const totals = {
+			roleLinksChecked: 0,
+			differences: 0,
+			changed: 0,
+			failed: 0,
+			permissionSkips: 0,
+		};
+		for (const userLink of userLinks) {
+			const syncResult = await this.syncService.syncLinkedUser(
+				base.serverLink,
+				userLink,
+			);
+			const summary = syncResult?.membershipSummary ?? {};
+			if (syncResult?.skippedFluxerOwner) {
+				skippedFluxerOwners += 1;
+			}
+			totals.roleLinksChecked += syncResult?.roleLinkCount ?? 0;
+			totals.differences += summary.differences ?? 0;
+			totals.changed += summary.changed ?? 0;
+			totals.failed += summary.failed ?? 0;
+			totals.permissionSkips += summary.skippedUnmanageableRoles ?? 0;
+		}
+		await context.reply(
+			[
+				"User resync completed.",
+				`Users checked: \`${userLinks.length}\``,
+				`Fluxer owners skipped: \`${skippedFluxerOwners}\``,
+				`Linked roles checked: \`${totals.roleLinksChecked}\``,
+				`Role membership differences: \`${totals.differences}\``,
+				`Role membership changes applied: \`${totals.changed}\``,
+				`Role membership changes failed: \`${totals.failed}\``,
+				`Role permission skips: \`${totals.permissionSkips}\``,
 			].join("\n"),
 		);
 	}
@@ -608,7 +764,7 @@ export class LinkService {
 		}
 		const fieldName = getChannelFieldName(platform);
 		const link = await this.channelLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			[fieldName]: { $eq: channelId },
 		});
 		if (!link) {
@@ -635,7 +791,7 @@ export class LinkService {
 		const removedMessageLinks =
 			messageLinkFilters.length > 0
 				? await this.messageLinks.deleteMany({
-						serverLinkId: base.serverLinkId,
+						serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 						$or: messageLinkFilters,
 					})
 				: { deletedCount: 0 };
@@ -663,7 +819,7 @@ export class LinkService {
 		}
 		const fieldName = getRoleFieldName(platform);
 		const link = await this.roleLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			[fieldName]: { $eq: roleId },
 		});
 		if (!link) {
@@ -696,7 +852,7 @@ export class LinkService {
 		}
 		const fieldName = getUserFieldName(platform);
 		const link = await this.userLinks.findOne({
-			serverLinkId: { $eq: base.serverLinkId },
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
 			[fieldName]: { $eq: userId },
 		});
 		if (!link) {
@@ -790,7 +946,7 @@ export class LinkService {
 				? "discordChannelId"
 				: "fluxerChannelId";
 		const link = await this.channelLinks.findOne({
-			serverLinkId: { $eq: sanitizedServerLinkId },
+			serverLinkId: getServerLinkIdQuery(sanitizedServerLinkId),
 			[sourceField]: { $eq: sanitizedSourceChannelId },
 		});
 		return link?.[targetField] ?? null;

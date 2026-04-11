@@ -8,9 +8,20 @@ import { Client, GatewayDispatchEvents } from "@discordjs/core";
 import { REST } from "@discordjs/rest";
 import { WebSocketManager } from "@discordjs/ws";
 import { logger } from "../../core/logger.js";
+const FLUXER_API_ORIGIN = "https://api.fluxer.app";
+const ALLOWED_FLUXER_API_ORIGINS = new Set([FLUXER_API_ORIGIN]);
 const FLUXER_ADMINISTRATOR_PERMISSION = 0x8n;
+const FLUXER_MANAGE_ROLES_PERMISSION = 0x10000000n;
+
+function hasPermission(permissions, permission) {
+	return (permissions & permission) === permission;
+}
+
 function parseFluxerApiConfig(rawBase) {
 	const url = new URL(rawBase);
+	if (!ALLOWED_FLUXER_API_ORIGINS.has(url.origin)) {
+		throw new Error(`Unsupported Fluxer API origin: ${url.origin}`);
+	}
 	const segments = url.pathname.split("/").filter(Boolean);
 	let version = "1";
 	if (segments.length > 0) {
@@ -25,6 +36,24 @@ function parseFluxerApiConfig(rawBase) {
 			? `${url.origin}/${segments.join("/")}`
 			: url.origin;
 	return { apiBase, version };
+}
+function buildFluxerApiUrl(apiBase, apiVersion, path) {
+	if (
+		typeof path !== "string" ||
+		!path.startsWith("/") ||
+		path.startsWith("//") ||
+		path.includes("\\")
+	) {
+		throw new Error("Fluxer API path must be a relative absolute path");
+	}
+
+	const normalizedApiBase = apiBase.endsWith("/") ? apiBase : `${apiBase}/`;
+	const url = new URL(`v${apiVersion}${path}`, normalizedApiBase);
+	if (!ALLOWED_FLUXER_API_ORIGINS.has(url.origin)) {
+		throw new Error(`Unsupported Fluxer API request origin: ${url.origin}`);
+	}
+
+	return `${FLUXER_API_ORIGIN}${url.pathname}${url.search}`;
 }
 function extractMemberRoleIds(member) {
 	return member?.roles ?? member?.role_ids ?? [];
@@ -63,6 +92,13 @@ function normalizeReplyPayload(payload) {
 		return { content: payload };
 	}
 	return payload ?? {};
+}
+function buildMemberSnapshot(member) {
+	return {
+		userId: extractMemberUserId(member),
+		nick: member?.nick ?? null,
+		roleIds: new Set(extractMemberRoleIds(member)),
+	};
 }
 export class FluxerPlatform extends EventEmitter {
 	constructor({ token, apiBase }) {
@@ -239,6 +275,7 @@ export class FluxerPlatform extends EventEmitter {
 					platform: "fluxer",
 					guildId: data.guild_id,
 					userId,
+					snapshot: buildMemberSnapshot(data),
 				});
 			},
 		);
@@ -294,7 +331,7 @@ export class FluxerPlatform extends EventEmitter {
 	getSelfUserId() {
 		return this.selfUserId;
 	}
-	async request(path, options = {}) {
+	async requestResponse(path, options = {}) {
 		const headers = {
 			Authorization: `Bot ${this.token}`,
 			...(options.headers || {}),
@@ -302,10 +339,31 @@ export class FluxerPlatform extends EventEmitter {
 		if (!(options.body instanceof FormData) && !headers["Content-Type"]) {
 			headers["Content-Type"] = "application/json";
 		}
-		const response = await fetch(
-			`${this.apiBase}/v${this.apiVersion}${path}`,
-			{ ...options, headers },
-		);
+		try {
+			const url = buildFluxerApiUrl(
+				this.apiBase,
+				this.apiVersion,
+				path,
+			);
+			return await fetch(url, {
+				...options,
+				redirect: "error",
+				headers,
+			});
+		} catch (error) {
+			logger.warn("Fluxer request failed", {
+				path,
+				method: options.method ?? "GET",
+				error: error.message,
+			});
+			return null;
+		}
+	}
+	async request(path, options = {}) {
+		const response = await this.requestResponse(path, options);
+		if (!response) {
+			return null;
+		}
 		if (!response.ok) {
 			return null;
 		}
@@ -318,6 +376,25 @@ export class FluxerPlatform extends EventEmitter {
 		}
 		return response.text();
 	}
+	async requestOk(path, options = {}, meta = {}) {
+		const response = await this.requestResponse(path, options);
+		if (!response) {
+			return false;
+		}
+		if (response.ok) {
+			return true;
+		}
+		const body = await response.text().catch(() => "");
+		logger.warn("Fluxer request returned non-success", {
+			path,
+			method: options.method ?? "GET",
+			status: response.status,
+			statusText: response.statusText,
+			body: body.slice(0, 500),
+			...meta,
+		});
+		return false;
+	}
 	async fetchGuild(guildId) {
 		return this.request(`/guilds/${guildId}`);
 	}
@@ -327,6 +404,10 @@ export class FluxerPlatform extends EventEmitter {
 			return null;
 		}
 		return { id: guild.id, name: guild.name };
+	}
+	async isGuildOwner(guildId, userId) {
+		const guild = await this.fetchGuild(guildId);
+		return Boolean(guild && guild.owner_id === userId);
 	}
 	async fetchGuildChannel(guildId, channelId) {
 		const channel = await this.request(`/channels/${channelId}`);
@@ -411,32 +492,28 @@ export class FluxerPlatform extends EventEmitter {
 		if (!member) {
 			return null;
 		}
-		return {
-			userId: extractMemberUserId(member),
-			nick: member.nick ?? null,
-			roleIds: new Set(extractMemberRoleIds(member)),
-		};
+		return buildMemberSnapshot(member);
 	}
 	async setMemberNickname(guildId, userId, nick) {
-		const response = await this.request(
+		return this.requestOk(
 			`/guilds/${guildId}/members/${userId}`,
 			{ method: "PATCH", body: JSON.stringify({ nick: nick ?? null }) },
+			{ guildId, userId, action: "setMemberNickname" },
 		);
-		return Boolean(response);
 	}
 	async addMemberRole(guildId, userId, roleId) {
-		const response = await this.request(
+		return this.requestOk(
 			`/guilds/${guildId}/members/${userId}/roles/${roleId}`,
 			{ method: "PUT" },
+			{ guildId, userId, roleId, action: "addMemberRole" },
 		);
-		return response === null || Boolean(response);
 	}
 	async removeMemberRole(guildId, userId, roleId) {
-		const response = await this.request(
+		return this.requestOk(
 			`/guilds/${guildId}/members/${userId}/roles/${roleId}`,
 			{ method: "DELETE" },
+			{ guildId, userId, roleId, action: "removeMemberRole" },
 		);
-		return response === null || Boolean(response);
 	}
 	async fetchGuildRoles(guildId) {
 		const roles = await this.request(`/guilds/${guildId}/roles`);
@@ -560,42 +637,52 @@ export class FluxerPlatform extends EventEmitter {
 		});
 	}
 	async deleteGuildMessage(channelId, messageId) {
-		const response = await this.request(
+		return this.requestOk(
 			`/channels/${channelId}/messages/${messageId}`,
 			{ method: "DELETE" },
+			{ channelId, messageId, action: "deleteGuildMessage" },
 		);
-		return response === null || Boolean(response);
 	}
 	async addReactionToMessage(channelId, messageId, emoji) {
 		const encodedEmoji = encodeURIComponent(emoji);
-		const response = await this.request(
+		return this.requestOk(
 			`/channels/${channelId}/messages/${messageId}/reactions/${encodedEmoji}/@me`,
 			{ method: "PUT" },
+			{ channelId, messageId, emoji, action: "addReactionToMessage" },
 		);
-		return response === null || Boolean(response);
 	}
 	async removeOwnReactionFromMessage(channelId, messageId, emoji) {
 		const encodedEmoji = encodeURIComponent(emoji);
-		const response = await this.request(
+		return this.requestOk(
 			`/channels/${channelId}/messages/${messageId}/reactions/${encodedEmoji}/@me`,
 			{ method: "DELETE" },
+			{
+				channelId,
+				messageId,
+				emoji,
+				action: "removeOwnReactionFromMessage",
+			},
 		);
-		return response === null || Boolean(response);
 	}
 	async removeAllReactionsFromMessage(channelId, messageId) {
-		const response = await this.request(
+		return this.requestOk(
 			`/channels/${channelId}/messages/${messageId}/reactions`,
 			{ method: "DELETE" },
+			{ channelId, messageId, action: "removeAllReactionsFromMessage" },
 		);
-		return response === null || Boolean(response);
 	}
 	async removeAllReactionsWithEmoji(channelId, messageId, emoji) {
 		const encodedEmoji = encodeURIComponent(emoji);
-		const response = await this.request(
+		return this.requestOk(
 			`/channels/${channelId}/messages/${messageId}/reactions/${encodedEmoji}`,
 			{ method: "DELETE" },
+			{
+				channelId,
+				messageId,
+				emoji,
+				action: "removeAllReactionsWithEmoji",
+			},
 		);
-		return response === null || Boolean(response);
 	}
 	calculatePermissionsFromRoles(member, roles) {
 		const memberRoleIds = new Set(extractMemberRoleIds(member));
@@ -632,10 +719,7 @@ export class FluxerPlatform extends EventEmitter {
 		}
 		const roles = await this.fetchGuildRoles(guildId);
 		const permissions = this.calculatePermissionsFromRoles(member, roles);
-		return (
-			(permissions & FLUXER_ADMINISTRATOR_PERMISSION) ===
-			FLUXER_ADMINISTRATOR_PERMISSION
-		);
+		return hasPermission(permissions, FLUXER_ADMINISTRATOR_PERMISSION);
 	}
 	async botHasAdministrator(guildId) {
 		const member = await this.fetchCurrentGuildMember(guildId);
@@ -644,10 +728,7 @@ export class FluxerPlatform extends EventEmitter {
 		}
 		const roles = await this.fetchGuildRoles(guildId);
 		const permissions = this.calculatePermissionsFromRoles(member, roles);
-		return (
-			(permissions & FLUXER_ADMINISTRATOR_PERMISSION) ===
-			FLUXER_ADMINISTRATOR_PERMISSION
-		);
+		return hasPermission(permissions, FLUXER_ADMINISTRATOR_PERMISSION);
 	}
 	async canManageRole(guildId, roleId) {
 		const targetRole = await this.fetchGuildRole(guildId, roleId);
@@ -667,6 +748,18 @@ export class FluxerPlatform extends EventEmitter {
 			return true;
 		}
 		const roles = await this.fetchGuildRoles(guildId);
+		const permissions = this.calculatePermissionsFromRoles(
+			botMember,
+			roles,
+		);
+		const hasRoleManagementPermission =
+			hasPermission(permissions, FLUXER_ADMINISTRATOR_PERMISSION) ||
+			hasPermission(permissions, FLUXER_MANAGE_ROLES_PERMISSION);
+
+		if (!hasRoleManagementPermission) {
+			return false;
+		}
+
 		const botHighestPosition = this.getHighestRolePosition(
 			botMember,
 			roles,

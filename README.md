@@ -275,6 +275,14 @@ Creates a role link. One side can be created automatically.
 
 Creates a user link.
 
+### `!sync-user <discord|fluxer> <user-id>`
+
+Manually resyncs one linked user.
+
+### `!resync-users`
+
+Manually resyncs all linked users for the current linked server pair.
+
 ### `!unlink-channel <discord|fluxer> <channel-id>`
 
 Removes a channel link and clears cached message mappings for that channel pair.

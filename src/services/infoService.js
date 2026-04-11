@@ -3,6 +3,8 @@
 // Licensed under the GNU Affero General Public License v3.0 or later
 // See the LICENSE file for details.
 
+import { sanitizeMongoObjectId } from "../utils/sanitize.js";
+
 function getGuildFieldName(platform) {
 	if (platform === "discord") {
 		return "discordGuildId";
@@ -57,6 +59,38 @@ function buildEmbed({ title, description, fields = [], footerText }) {
 		embed.footer = { text: footerText };
 	}
 	return embed;
+}
+function getServerLinkIdQuery(serverLinkId) {
+	const values = [];
+	function addValue(value) {
+		if (value === null || value === undefined) {
+			return;
+		}
+		if (
+			values.some(function valueMatches(existing) {
+				return (
+					typeof existing === typeof value &&
+					String(existing) === String(value)
+				);
+			})
+		) {
+			return;
+		}
+		values.push(value);
+	}
+
+	addValue(sanitizeMongoObjectId(serverLinkId));
+
+	if (serverLinkId !== null && serverLinkId !== undefined) {
+		addValue(serverLinkId);
+		addValue(String(serverLinkId));
+	}
+
+	if (values.length === 1) {
+		return { $eq: values[0] };
+	}
+
+	return { $in: values };
 }
 export class InfoService {
 	constructor({ mongo, platforms, botPrefix }) {
@@ -114,6 +148,16 @@ export class InfoService {
 					].join("\n"),
 				},
 				{
+					name: "Manual sync",
+					value: [
+						`\`${this.botPrefix}sync-user <discord|fluxer> <user-id>\``,
+						"Resyncs one linked user.",
+						"",
+						`\`${this.botPrefix}resync-users\``,
+						"Resyncs all linked users in this server pair.",
+					].join("\n"),
+				},
+				{
 					name: "Flags for link-channel",
 					value: [
 						"4th extra argument: sync other bot messages",
@@ -146,7 +190,7 @@ export class InfoService {
 			return;
 		}
 		const links = await this.channelLinks
-			.find({ serverLinkId: base.serverLink._id })
+			.find({ serverLinkId: getServerLinkIdQuery(base.serverLink._id) })
 			.toArray();
 		if (links.length === 0) {
 			await context.reply({
@@ -220,7 +264,7 @@ export class InfoService {
 			return;
 		}
 		const links = await this.roleLinks
-			.find({ serverLinkId: base.serverLink._id })
+			.find({ serverLinkId: getServerLinkIdQuery(base.serverLink._id) })
 			.toArray();
 		if (links.length === 0) {
 			await context.reply({
@@ -292,7 +336,7 @@ export class InfoService {
 			return;
 		}
 		const links = await this.userLinks
-			.find({ serverLinkId: base.serverLink._id })
+			.find({ serverLinkId: getServerLinkIdQuery(base.serverLink._id) })
 			.toArray();
 		if (links.length === 0) {
 			await context.reply({
@@ -323,20 +367,26 @@ export class InfoService {
 		);
 		const fields = [];
 		for (const [index, link] of pageItems.entries()) {
-			const [discordMember, fluxerMember] = await Promise.all([
-				this.platforms.discord.fetchGuildMember(
-					base.serverLink.discordGuildId,
-					link.discordUserId,
-				),
-				this.platforms.fluxer.fetchGuildMember(
-					base.serverLink.fluxerGuildId,
-					link.fluxerUserId,
-				),
-			]);
+			const [discordMember, fluxerMember, fluxerUserIsOwner] =
+				await Promise.all([
+					this.platforms.discord.fetchGuildMember(
+						base.serverLink.discordGuildId,
+						link.discordUserId,
+					),
+					this.platforms.fluxer.fetchGuildMember(
+						base.serverLink.fluxerGuildId,
+						link.fluxerUserId,
+					),
+					this.platforms.fluxer.isGuildOwner(
+						base.serverLink.fluxerGuildId,
+						link.fluxerUserId,
+					),
+				]);
 			fields.push({
 				name: `${(page - 1) * this.itemsPerPage + index + 1}. ${truncate(getDiscordMemberLabel(discordMember, link.discordUserId))} <-> ${truncate(getFluxerMemberLabel(fluxerMember, link.fluxerUserId))}`,
 				value: [
 					`Priority: \`${link.priority}\``,
+					`Status: \`${fluxerUserIsOwner ? "sync disabled - Fluxer owner" : "active"}\``,
 					`Discord: \`${link.discordUserId}\``,
 					`Fluxer: \`${link.fluxerUserId}\``,
 				].join("\n"),
