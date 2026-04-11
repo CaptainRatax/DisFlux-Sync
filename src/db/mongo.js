@@ -40,6 +40,20 @@ export class MongoService {
 			},
 		);
 
+		await this.db.collection("server_links").createIndex(
+			{ discordGuildId: 1 },
+			{
+				name: "idx_server_link_discord_guild",
+			},
+		);
+
+		await this.db.collection("server_links").createIndex(
+			{ fluxerGuildId: 1 },
+			{
+				name: "idx_server_link_fluxer_guild",
+			},
+		);
+
 		await this.db.collection("pending_setups").createIndex(
 			{ code: 1 },
 			{

@@ -165,6 +165,9 @@ export class LinkService {
 		this.botPrefix = botPrefix;
 		this.syncService = syncService;
 	}
+	getBotPrefix(context) {
+		return context.botPrefix ?? this.botPrefix;
+	}
 	async handleLinkChannel(
 		context,
 		priorityRaw,
@@ -186,7 +189,7 @@ export class LinkService {
 			syncWebhookMessages === null
 		) {
 			await context.reply(
-				`Usage: ${this.botPrefix}link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>`,
+				`Usage: ${this.getBotPrefix(context)}link-channel <discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <yes|no> <yes|no>`,
 			);
 			return;
 		}
@@ -404,7 +407,7 @@ export class LinkService {
 		const priority = normalizePriority(priorityRaw);
 		if (!priority) {
 			await context.reply(
-				`Usage: ${this.botPrefix}link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>`,
+				`Usage: ${this.getBotPrefix(context)}link-role <discord|fluxer> <discord-role-id|auto> <fluxer-role-id|auto>`,
 			);
 			return;
 		}
@@ -572,7 +575,7 @@ export class LinkService {
 		const priority = normalizePriority(priorityRaw);
 		if (!priority) {
 			await context.reply(
-				`Usage: ${this.botPrefix}link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`,
+				`Usage: ${this.getBotPrefix(context)}link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`,
 			);
 			return;
 		}
@@ -580,7 +583,7 @@ export class LinkService {
 		const fluxerUserId = normalizeRequiredId(fluxerUserRaw);
 		if (!discordUserId || !fluxerUserId) {
 			await context.reply(
-				`Usage: ${this.botPrefix}link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`,
+				`Usage: ${this.getBotPrefix(context)}link-user <discord|fluxer> <discord-user-id> <fluxer-user-id>`,
 			);
 			return;
 		}
@@ -663,7 +666,7 @@ export class LinkService {
 		const userId = normalizeId(userRaw);
 		if (!platform || !userId) {
 			await context.reply(
-				`Usage: ${this.botPrefix}sync-user <discord|fluxer> <user-id>`,
+				`Usage: ${this.getBotPrefix(context)}sync-user <discord|fluxer> <user-id>`,
 			);
 			return;
 		}
@@ -758,7 +761,7 @@ export class LinkService {
 		const channelId = normalizeId(channelRaw);
 		if (!platform || !channelId) {
 			await context.reply(
-				`Usage: ${this.botPrefix}unlink-channel <discord|fluxer> <channel-id>`,
+				`Usage: ${this.getBotPrefix(context)}unlink-channel <discord|fluxer> <channel-id>`,
 			);
 			return;
 		}
@@ -813,7 +816,7 @@ export class LinkService {
 		const roleId = normalizeId(roleRaw);
 		if (!platform || !roleId) {
 			await context.reply(
-				`Usage: ${this.botPrefix}unlink-role <discord|fluxer> <role-id>`,
+				`Usage: ${this.getBotPrefix(context)}unlink-role <discord|fluxer> <role-id>`,
 			);
 			return;
 		}
@@ -846,7 +849,7 @@ export class LinkService {
 		const userId = normalizeId(userRaw);
 		if (!platform || !userId) {
 			await context.reply(
-				`Usage: ${this.botPrefix}unlink-user <discord|fluxer> <user-id>`,
+				`Usage: ${this.getBotPrefix(context)}unlink-user <discord|fluxer> <user-id>`,
 			);
 			return;
 		}

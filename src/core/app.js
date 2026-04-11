@@ -14,6 +14,7 @@ import { LinkService } from "../services/linkService.js";
 import { SyncService } from "../services/syncService.js";
 import { MessageBridgeService } from "../services/messageBridgeService.js";
 import { InfoService } from "../services/infoService.js";
+import { PrefixService } from "../services/prefixService.js";
 import { HttpServer } from "../api/server.js";
 
 export class App {
@@ -22,7 +23,10 @@ export class App {
 			messageLinkTtlDays: env.messageLinkTtlDays,
 		});
 
-		this.discord = new DiscordPlatform(env.discordToken);
+		this.discord = new DiscordPlatform({
+			token: env.discordToken,
+			clientId: env.discordClientId,
+		});
 		this.fluxer = new FluxerPlatform({
 			token: env.fluxerToken,
 			apiBase: env.fluxerApiBase,
@@ -43,6 +47,7 @@ export class App {
 		this.syncService = null;
 		this.messageBridgeService = null;
 		this.infoService = null;
+		this.prefixService = null;
 	}
 
 	async start() {
@@ -81,20 +86,26 @@ export class App {
 			botPrefix: env.botPrefix,
 		});
 
+		this.prefixService = new PrefixService({
+			mongo: this.mongo,
+			platforms: this.platforms,
+			defaultPrefix: env.botPrefix,
+		});
+
 		bindCommandDispatcher({
 			platformClient: this.discord,
-			prefix: env.botPrefix,
 			setupService: this.setupService,
 			linkService: this.linkService,
 			infoService: this.infoService,
+			prefixService: this.prefixService,
 		});
 
 		bindCommandDispatcher({
 			platformClient: this.fluxer,
-			prefix: env.botPrefix,
 			setupService: this.setupService,
 			linkService: this.linkService,
 			infoService: this.infoService,
+			prefixService: this.prefixService,
 		});
 
 		await this.httpServer.start();

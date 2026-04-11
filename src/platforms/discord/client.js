@@ -11,14 +11,27 @@ import {
 	GatewayIntentBits,
 	Partials,
 	PermissionsBitField,
+	REST,
+	Routes,
 } from "discord.js";
 import { logger } from "../../core/logger.js";
+import {
+	buildDiscordSlashCommands,
+	getDiscordSlashCommandArgs,
+} from "./slashCommands.js";
 function getUserDisplayName(user, member) {
 	return (
 		member?.displayName ??
 		user?.globalName ??
 		user?.username ??
 		"Unknown User"
+	);
+}
+function getInteractionDisplayName(interaction) {
+	return (
+		interaction.member?.displayName ??
+		interaction.member?.nick ??
+		getUserDisplayName(interaction.user, interaction.member)
 	);
 }
 function getUnicodeEmojiFromReaction(reaction) {
@@ -62,9 +75,10 @@ function buildMemberSnapshot(member) {
 	};
 }
 export class DiscordPlatform extends EventEmitter {
-	constructor(token) {
+	constructor({ token, clientId }) {
 		super();
 		this.token = token;
+		this.clientId = clientId;
 		this.client = new Client({
 			intents: [
 				GatewayIntentBits.Guilds,
@@ -78,7 +92,25 @@ export class DiscordPlatform extends EventEmitter {
 	}
 	async start() {
 		this.registerCoreEvents();
+		await this.registerSlashCommands();
 		await this.client.login(this.token);
+	}
+	async registerSlashCommands() {
+		const commands = buildDiscordSlashCommands();
+		const rest = new REST({ version: "10" }).setToken(this.token);
+
+		try {
+			await rest.put(Routes.applicationCommands(this.clientId), {
+				body: commands,
+			});
+			logger.info("Discord slash commands registered", {
+				commandCount: commands.length,
+			});
+		} catch (error) {
+			logger.error("Failed to register Discord slash commands", {
+				error: error.message,
+			});
+		}
 	}
 	registerCoreEvents() {
 		this.client.once(Events.ClientReady, (client) => {
@@ -86,6 +118,36 @@ export class DiscordPlatform extends EventEmitter {
 				userId: client.user.id,
 				tag: client.user.tag,
 			});
+		});
+		this.client.on(Events.InteractionCreate, async (interaction) => {
+			if (!interaction.isChatInputCommand()) {
+				return;
+			}
+			if (!interaction.inGuild()) {
+				await interaction
+					.reply({
+						content:
+							"This command can only be used inside a server.",
+						ephemeral: true,
+					})
+					.catch(() => {});
+				return;
+			}
+			try {
+				await interaction.deferReply();
+			} catch (error) {
+				logger.warn("Failed to defer Discord slash command", {
+					commandName: interaction.commandName,
+					guildId: interaction.guildId,
+					userId: interaction.user?.id,
+					error: error.message,
+				});
+				return;
+			}
+			this.emit(
+				"slashCommand",
+				this.buildSlashCommandEventPayload(interaction),
+			);
 		});
 		this.client.on(Events.MessageCreate, async (message) => {
 			if (!message.inGuild()) {
@@ -235,6 +297,49 @@ export class DiscordPlatform extends EventEmitter {
 		this.client.on(Events.Error, (error) => {
 			logger.error("Discord client error", { error: error.message });
 		});
+	}
+	buildSlashCommandEventPayload(interaction) {
+		const selfUserId = this.client.user?.id ?? null;
+		return {
+			platform: "discord",
+			guildId: interaction.guildId,
+			channelId: interaction.channelId,
+			userId: interaction.user.id,
+			messageId: interaction.id,
+			commandName: interaction.commandName,
+			args: getDiscordSlashCommandArgs(interaction),
+			content: `/${interaction.commandName}`,
+			displayName: getInteractionDisplayName(interaction),
+			referenceMessageId: null,
+			mentionUserIds: [],
+			mentionRoleIds: [],
+			mentionChannelIds: [],
+			mentionEveryone: false,
+			userMentionLabels: {},
+			embeds: [],
+			attachments: [],
+			attachmentsCount: 0,
+			isBotAuthor: false,
+			isWebhookMessage: false,
+			isSelfMessage: Boolean(
+				selfUserId && interaction.user?.id === selfUserId,
+			),
+			reply: async (payload) => {
+				const normalized = normalizeReplyPayload(payload);
+				const responsePayload = {
+					content: normalized.content ?? "",
+					embeds: normalized.embeds ?? undefined,
+					allowedMentions: normalized.allowedMentions ?? undefined,
+				};
+
+				if (interaction.deferred || interaction.replied) {
+					await interaction.editReply(responsePayload);
+					return;
+				}
+
+				await interaction.reply(responsePayload);
+			},
+		};
 	}
 	buildMessageEventPayload(message) {
 		const userMentionLabels = {};

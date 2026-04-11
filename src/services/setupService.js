@@ -11,6 +11,7 @@ import {
 	sanitizePlatformId,
 	sanitizeSetupCode,
 } from "../utils/sanitize.js";
+import { formatInlineCode } from "../utils/prefix.js";
 
 function getGuildFieldName(platform) {
 	if (platform === "discord") {
@@ -52,6 +53,10 @@ export class SetupService {
 		this.botPrefix = botPrefix;
 	}
 
+	getBotPrefix(context) {
+		return context.botPrefix ?? this.botPrefix;
+	}
+
 	async handleSetup(context, targetGuildId) {
 		if (!context.guildId) {
 			await context.reply(
@@ -66,7 +71,7 @@ export class SetupService {
 
 		if (!normalizedTargetGuildId || !sourceGuildId || !sourceUserId) {
 			await context.reply(
-				`Usage: ${this.botPrefix}setup <target-guild-id>`,
+				`Usage: ${this.getBotPrefix(context)}setup <target-guild-id>`,
 			);
 			return;
 		}
@@ -157,7 +162,7 @@ export class SetupService {
 			[
 				`Setup code created for ${targetPlatform}.`,
 				`Code: \`${formatSetupCode(code)}\``,
-				`Run \`${this.botPrefix}finish-setup ${formatSetupCode(code)}\` inside the target server.`,
+				`Run ${formatInlineCode(`${this.getBotPrefix(context)}finish-setup ${formatSetupCode(code)}`)} inside the target server.`,
 				`This code expires in ${this.setupCodeTtlMinutes} minutes.`,
 			].join("\n"),
 		);
@@ -174,7 +179,9 @@ export class SetupService {
 		const code = sanitizeSetupCode(codeInput, this.setupCodeLength);
 
 		if (!code) {
-			await context.reply(`Usage: ${this.botPrefix}finish-setup <code>`);
+			await context.reply(
+				`Usage: ${this.getBotPrefix(context)}finish-setup <code>`,
+			);
 			return;
 		}
 
@@ -301,6 +308,7 @@ export class SetupService {
 		await this.serverLinks.insertOne({
 			discordGuildId: sanitizedDiscordGuildId,
 			fluxerGuildId: sanitizedFluxerGuildId,
+			prefix: this.botPrefix,
 			createdAt: new Date(),
 		});
 
