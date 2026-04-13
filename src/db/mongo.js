@@ -54,6 +54,66 @@ export class MongoService {
 			},
 		);
 
+		await this.db.collection("server_links").createIndex(
+			{ discordAnnouncementChannelId: 1 },
+			{
+				name: "idx_server_link_discord_announcement_channel",
+				partialFilterExpression: {
+					discordAnnouncementChannelId: { $type: "string" },
+				},
+			},
+		);
+
+		await this.db.collection("server_links").createIndex(
+			{ fluxerAnnouncementChannelId: 1 },
+			{
+				name: "idx_server_link_fluxer_announcement_channel",
+				partialFilterExpression: {
+					fluxerAnnouncementChannelId: { $type: "string" },
+				},
+			},
+		);
+
+		await this.db.collection("server_links").createIndex(
+			{ disabledAt: 1 },
+			{
+				name: "idx_server_link_disabled_at",
+				partialFilterExpression: {
+					disabledAt: { $type: "date" },
+				},
+			},
+		);
+
+		await this.db.collection("server_links").createIndex(
+			{ disposeAfter: 1 },
+			{
+				name: "idx_server_link_dispose_after",
+				partialFilterExpression: {
+					disposeAfter: { $type: "date" },
+				},
+			},
+		);
+
+		await this.db.collection("server_links").createIndex(
+			{ availabilityMissingSince: 1 },
+			{
+				name: "idx_server_link_availability_missing_since",
+				partialFilterExpression: {
+					availabilityMissingSince: { $type: "date" },
+				},
+			},
+		);
+
+		await this.db.collection("server_links").createIndex(
+			{ availabilityMissingConfirmAfter: 1 },
+			{
+				name: "idx_server_link_availability_missing_confirm_after",
+				partialFilterExpression: {
+					availabilityMissingConfirmAfter: { $type: "date" },
+				},
+			},
+		);
+
 		await this.db.collection("pending_setups").createIndex(
 			{ code: 1 },
 			{
@@ -91,6 +151,29 @@ export class MongoService {
 			{
 				expireAfterSeconds: 0,
 				name: "ttl_pending_user_link_expiration",
+			},
+		);
+
+		await this.db.collection("pending_server_unlinks").createIndex(
+			{ codeHash: 1 },
+			{
+				unique: true,
+				name: "uniq_pending_server_unlink_code_hash",
+			},
+		);
+
+		await this.db.collection("pending_server_unlinks").createIndex(
+			{ serverLinkId: 1 },
+			{
+				name: "idx_pending_server_unlink_server_link",
+			},
+		);
+
+		await this.db.collection("pending_server_unlinks").createIndex(
+			{ expiresAt: 1 },
+			{
+				expireAfterSeconds: 0,
+				name: "ttl_pending_server_unlink_expiration",
 			},
 		);
 
@@ -156,6 +239,26 @@ export class MongoService {
 				name: "uniq_user_link_fluxer_side",
 				partialFilterExpression: {
 					fluxerUserId: { $type: "string" },
+				},
+			},
+		);
+
+		await this.db.collection("user_links").createIndex(
+			{ disabledAt: 1 },
+			{
+				name: "idx_user_link_disabled_at",
+				partialFilterExpression: {
+					disabledAt: { $type: "date" },
+				},
+			},
+		);
+
+		await this.db.collection("user_links").createIndex(
+			{ disposeAfter: 1 },
+			{
+				name: "idx_user_link_dispose_after",
+				partialFilterExpression: {
+					disposeAfter: { $type: "date" },
 				},
 			},
 		);

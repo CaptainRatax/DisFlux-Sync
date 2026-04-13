@@ -22,6 +22,47 @@ async function applyContextPrefix(context, prefixService) {
 	}
 }
 
+function hasSensitiveCodeArgument(parsed) {
+	const commandName = parsed.name;
+	if (
+		commandName !== "finish-setup" &&
+		commandName !== "finishsetup" &&
+		commandName !== "link-me" &&
+		commandName !== "linkme" &&
+		commandName !== "unlink-server" &&
+		commandName !== "unlinkserver"
+	) {
+		return false;
+	}
+
+	return (
+		parsed.args[0] !== undefined &&
+		parsed.args[0] !== null &&
+		String(parsed.args[0]).trim() !== ""
+	);
+}
+
+async function deleteSensitiveCommandMessage(context, parsed) {
+	if (
+		!hasSensitiveCodeArgument(parsed) ||
+		typeof context.deleteMessage !== "function"
+	) {
+		return;
+	}
+
+	try {
+		await context.deleteMessage();
+	} catch (error) {
+		logger.warn("Failed to delete sensitive command message", {
+			platform: context.platform,
+			guildId: context.guildId,
+			messageId: context.messageId,
+			commandName: parsed.name,
+			error: error.message,
+		});
+	}
+}
+
 async function executeParsedCommand({
 	context,
 	parsed,
@@ -78,6 +119,17 @@ async function executeParsedCommand({
 		await linkService.handleLinkMe(context, parsed.args[0]);
 		return true;
 	}
+	if (
+		parsed.name === "set-announcement-channel" ||
+		parsed.name === "setannouncementchannel"
+	) {
+		await linkService.handleSetAnnouncementChannel(
+			context,
+			parsed.args[0],
+			parsed.args[1],
+		);
+		return true;
+	}
 	if (parsed.name === "sync-user" || parsed.name === "syncuser") {
 		await linkService.handleSyncUser(
 			context,
@@ -123,6 +175,10 @@ async function executeParsedCommand({
 			parsed.args[0],
 			parsed.args[1],
 		);
+		return true;
+	}
+	if (parsed.name === "unlink-server" || parsed.name === "unlinkserver") {
+		await linkService.handleUnlinkServer(context, parsed.args[0]);
 		return true;
 	}
 	if (parsed.name === "list-channels" || parsed.name === "listchannels") {
@@ -179,6 +235,8 @@ async function runParsedCommand({
 		await context.reply(
 			"Something went wrong while processing that command.",
 		);
+	} finally {
+		await deleteSensitiveCommandMessage(context, parsed);
 	}
 }
 

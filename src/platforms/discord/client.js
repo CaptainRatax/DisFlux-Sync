@@ -163,6 +163,19 @@ export class DiscordPlatform extends EventEmitter {
 				tag: client.user.tag,
 			});
 		});
+		this.client.on(Events.GuildCreate, async (guild) => {
+			this.emit("guildAvailable", {
+				platform: "discord",
+				guildId: guild.id,
+			});
+		});
+		this.client.on(Events.GuildDelete, async (guild) => {
+			this.emit("guildUnavailable", {
+				platform: "discord",
+				guildId: guild.id,
+				unavailable: guild.available === false,
+			});
+		});
 		this.client.on(Events.InteractionCreate, async (interaction) => {
 			if (!interaction.isChatInputCommand()) {
 				return;
@@ -329,6 +342,13 @@ export class DiscordPlatform extends EventEmitter {
 				roleId: newRole.id,
 			});
 		});
+		this.client.on(Events.GuildRoleDelete, async (role) => {
+			this.emit("roleDelete", {
+				platform: "discord",
+				guildId: role.guild.id,
+				roleId: role.id,
+			});
+		});
 		this.client.on(Events.ChannelUpdate, async (_oldChannel, newChannel) => {
 			if (!newChannel?.guildId) {
 				return;
@@ -344,6 +364,33 @@ export class DiscordPlatform extends EventEmitter {
 				platform: "discord",
 				guildId: newChannel.guildId,
 				channelId: newChannel.id,
+			});
+		});
+		this.client.on(Events.ChannelDelete, async (channel) => {
+			if (!channel?.guildId) {
+				return;
+			}
+			this.emit("channelDelete", {
+				platform: "discord",
+				guildId: channel.guildId,
+				channelId: channel.id,
+			});
+		});
+		this.client.on(Events.GuildMemberAdd, async (member) => {
+			const payload = {
+				platform: "discord",
+				guildId: member.guild.id,
+				userId: member.id,
+				snapshot: buildMemberSnapshot(member),
+			};
+			this.emit("memberJoin", payload);
+			this.emit("memberUpdate", payload);
+		});
+		this.client.on(Events.GuildMemberRemove, async (member) => {
+			this.emit("memberLeave", {
+				platform: "discord",
+				guildId: member.guild.id,
+				userId: member.id,
 			});
 		});
 		this.client.on(
@@ -444,6 +491,8 @@ export class DiscordPlatform extends EventEmitter {
 					},
 				});
 			},
+			deleteMessage: async () =>
+				this.deleteGuildMessage(message.channelId, message.id),
 		};
 	}
 	getSelfUserId() {
@@ -476,6 +525,18 @@ export class DiscordPlatform extends EventEmitter {
 			return channel;
 		} catch {
 			return null;
+		}
+	}
+	async fetchGuildChannels(guildId) {
+		const guild = await this.fetchGuild(guildId);
+		if (!guild) {
+			return [];
+		}
+		try {
+			const channels = await guild.channels.fetch();
+			return [...channels.values()].filter(Boolean);
+		} catch {
+			return [];
 		}
 	}
 	async fetchGuildMessage(channelId, messageId) {

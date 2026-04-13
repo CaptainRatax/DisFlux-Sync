@@ -5,6 +5,7 @@
 
 import { logger } from "../core/logger.js";
 import { OperationGuard } from "../core/operationGuard.js";
+import { isLinkEnabled } from "./linkLifecycleService.js";
 import { sanitizeMongoObjectId } from "../utils/sanitize.js";
 
 function getOppositePlatform(platform) {
@@ -234,6 +235,7 @@ function createRoleMetadataSyncResult() {
 	return {
 		differences: 0,
 		changed: 0,
+		skippedDisabled: 0,
 		skippedUnsupported: 0,
 		skippedMissingSource: 0,
 		skippedMissingTarget: 0,
@@ -253,6 +255,7 @@ function createChannelMetadataSyncResult() {
 	return {
 		differences: 0,
 		changed: 0,
+		skippedDisabled: 0,
 		skippedUnsupported: 0,
 		skippedMissingIds: 0,
 		skippedMissingSource: 0,
@@ -284,12 +287,13 @@ function addSyncResult(summary, result) {
 }
 
 export class SyncService {
-	constructor({ mongo, platforms }) {
+	constructor({ mongo, platforms, lifecycleService = null }) {
 		this.serverLinks = mongo.collection("server_links");
 		this.channelLinks = mongo.collection("channel_links");
 		this.roleLinks = mongo.collection("role_links");
 		this.userLinks = mongo.collection("user_links");
 		this.platforms = platforms;
+		this.lifecycleService = lifecycleService;
 		this.guard = new OperationGuard(8000);
 	}
 
@@ -326,17 +330,27 @@ export class SyncService {
 
 	async reconcileAll() {
 		const serverLinks = await this.serverLinks.find({}).toArray();
+		let enabledServerLinkCount = 0;
 
 		for (const serverLink of serverLinks) {
+			if (!isLinkEnabled(serverLink)) {
+				continue;
+			}
+			enabledServerLinkCount += 1;
 			await this.reconcileServerLink(serverLink);
 		}
 
 		logger.info("Initial reconciliation finished", {
 			serverLinkCount: serverLinks.length,
+			enabledServerLinkCount,
 		});
 	}
 
 	async reconcileServerLink(serverLink) {
+		if (!isLinkEnabled(serverLink)) {
+			return;
+		}
+
 		const serverLinkIdFilter = getServerLinkIdFilter(serverLink._id);
 
 		const roleLinks = await this.roleLinks
@@ -375,12 +389,17 @@ export class SyncService {
 	}
 
 	async resyncLinkedRoles(serverLink) {
+		const summary = createRoleMetadataSummary();
+		if (!isLinkEnabled(serverLink)) {
+			summary.skippedDisabled += 1;
+			return summary;
+		}
+
 		const roleLinks = await this.roleLinks
 			.find({
 				serverLinkId: getServerLinkIdFilter(serverLink._id),
 			})
 			.toArray();
-		const summary = createRoleMetadataSummary();
 		summary.checked = roleLinks.length;
 
 		for (const roleLink of roleLinks) {
@@ -398,6 +417,12 @@ export class SyncService {
 	}
 
 	async resyncLinkedChannels(serverLink) {
+		const summary = createChannelMetadataSummary();
+		if (!isLinkEnabled(serverLink)) {
+			summary.skippedDisabled += 1;
+			return summary;
+		}
+
 		const serverLinkIdFilter = getServerLinkIdFilter(serverLink._id);
 		const roleLinks = await this.roleLinks
 			.find({
@@ -409,7 +434,6 @@ export class SyncService {
 				serverLinkId: serverLinkIdFilter,
 			})
 			.toArray();
-		const summary = createChannelMetadataSummary();
 		summary.checked = channelLinks.length;
 		summary.roleLinksUsed = roleLinks.length;
 
@@ -435,6 +459,35 @@ export class SyncService {
 					serverLinkId: getServerLinkIdFilter(serverLink._id),
 				})
 				.toArray());
+
+		if (!isLinkEnabled(serverLink)) {
+			return {
+				roleLinkCount: linkedRoleLinks.length,
+				membershipSummary: createRoleMembershipSummary(),
+				skipped: true,
+				skippedDisabledServer: true,
+			};
+		}
+
+		if (!isLinkEnabled(userLink)) {
+			const presence =
+				await this.lifecycleService?.refreshUserLinkPresence(
+					serverLink,
+					userLink,
+					{ reason: "user_sync_presence_check" },
+				);
+
+			if (!presence?.enabled) {
+				return {
+					roleLinkCount: linkedRoleLinks.length,
+					membershipSummary: createRoleMembershipSummary(),
+					skipped: true,
+					skippedDisabledUser: true,
+				};
+			}
+
+			userLink = presence.userLink ?? userLink;
+		}
 
 		if (await this.isFluxerOwnerLinkedUser(serverLink, userLink)) {
 			return {
@@ -476,6 +529,10 @@ export class SyncService {
 	}
 
 	async syncLinkedRoleAcrossUsers(serverLink, roleLink) {
+		if (!isLinkEnabled(serverLink)) {
+			return;
+		}
+
 		await this.syncRoleMetadata(serverLink, roleLink, roleLink.priority);
 
 		const roleLinks = await this.roleLinks
@@ -491,6 +548,10 @@ export class SyncService {
 			.toArray();
 
 		for (const userLink of userLinks) {
+			if (!isLinkEnabled(userLink)) {
+				continue;
+			}
+
 			if (await this.isFluxerOwnerLinkedUser(serverLink, userLink)) {
 				continue;
 			}
@@ -527,6 +588,11 @@ export class SyncService {
 		sourcePlatformOverride = null,
 	) {
 		const result = createChannelMetadataSyncResult();
+		if (!isLinkEnabled(serverLink)) {
+			result.skippedDisabled += 1;
+			return result;
+		}
+
 		const sourcePlatform = sourcePlatformOverride ?? channelLink.priority;
 		if (!isSupportedPlatform(sourcePlatform)) {
 			logger.warn("Skipped channel sync with unsupported source platform", {
@@ -791,6 +857,9 @@ export class SyncService {
 			if (!serverLink) {
 				return;
 			}
+			if (!isLinkEnabled(serverLink)) {
+				return;
+			}
 
 			const roleField =
 				event.platform === "discord" ? "discordRoleId" : "fluxerRoleId";
@@ -838,6 +907,9 @@ export class SyncService {
 				event.guildId,
 			);
 			if (!serverLink) {
+				return;
+			}
+			if (!isLinkEnabled(serverLink)) {
 				return;
 			}
 
@@ -898,6 +970,9 @@ export class SyncService {
 			if (!serverLink) {
 				return;
 			}
+			if (!isLinkEnabled(serverLink)) {
+				return;
+			}
 
 			const userField =
 				event.platform === "discord" ? "discordUserId" : "fluxerUserId";
@@ -919,7 +994,22 @@ export class SyncService {
 				})
 				.toArray();
 
-			for (const userLink of userLinks) {
+			for (let userLink of userLinks) {
+				if (!isLinkEnabled(userLink)) {
+					const presence =
+						await this.lifecycleService?.refreshUserLinkPresence(
+							serverLink,
+							userLink,
+							{ reason: "member_update_presence_check" },
+						);
+
+					if (!presence?.enabled) {
+						continue;
+					}
+
+					userLink = presence.userLink ?? userLink;
+				}
+
 				if (await this.isFluxerOwnerLinkedUser(serverLink, userLink)) {
 					continue;
 				}
@@ -973,6 +1063,11 @@ export class SyncService {
 
 	async syncRoleMetadata(serverLink, roleLink, sourcePlatform) {
 		const result = createRoleMetadataSyncResult();
+		if (!isLinkEnabled(serverLink)) {
+			result.skippedDisabled += 1;
+			return result;
+		}
+
 		if (!isSupportedPlatform(sourcePlatform)) {
 			logger.warn("Skipped role sync with unsupported source platform", {
 				sourcePlatform,
@@ -1244,19 +1339,29 @@ export class SyncService {
 	}
 
 	async fetchUserSnapshots(serverLink, userLink) {
-		const discordSnapshot =
-			await this.platforms.discord.getGuildMemberSnapshot(
+		const [discordSnapshot, fluxerSnapshot] = await Promise.all([
+			this.platforms.discord.getGuildMemberSnapshot(
 				serverLink.discordGuildId,
 				userLink.discordUserId,
-			);
-
-		const fluxerSnapshot =
-			await this.platforms.fluxer.getGuildMemberSnapshot(
+			),
+			this.platforms.fluxer.getGuildMemberSnapshot(
 				serverLink.fluxerGuildId,
 				userLink.fluxerUserId,
-			);
+			),
+		]);
 
 		if (!discordSnapshot || !fluxerSnapshot) {
+			const missingPlatform = !discordSnapshot
+				? "discord"
+				: !fluxerSnapshot
+					? "fluxer"
+					: null;
+
+			await this.lifecycleService?.markUserLinkDisabled(userLink, {
+				platform: missingPlatform,
+				reason: "member_snapshot_missing",
+			});
+
 			logger.warn("User snapshot fetch failed during sync", {
 				discordGuildId: serverLink.discordGuildId,
 				fluxerGuildId: serverLink.fluxerGuildId,
@@ -1265,6 +1370,12 @@ export class SyncService {
 			});
 
 			return null;
+		}
+
+		if (!isLinkEnabled(userLink)) {
+			await this.lifecycleService?.markUserLinkEnabled(userLink, {
+				reason: "member_snapshot_present",
+			});
 		}
 
 		return {

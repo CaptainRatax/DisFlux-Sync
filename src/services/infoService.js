@@ -4,6 +4,7 @@
 // See the LICENSE file for details.
 
 import { sanitizeMongoObjectId } from "../utils/sanitize.js";
+import { isLinkEnabled } from "./linkLifecycleService.js";
 import { formatInlineCode } from "../utils/prefix.js";
 
 function getGuildFieldName(platform) {
@@ -127,10 +128,24 @@ export class InfoService {
 					name: "Setup",
 					value: [
 						formatInlineCode(`${botPrefix}setup <target-guild-id>`),
-						"Starts the setup flow from the current server.",
+						"Starts the setup flow from the current server and sends the setup code by DM.",
 						"",
 						formatInlineCode(`${botPrefix}finish-setup <code>`),
-						"Completes the setup flow in the target linked server.",
+						"Completes the setup flow in the target linked server using the code from DM.",
+					].join("\n"),
+				},
+				{
+					name: "Announcements",
+					value: [
+						formatInlineCode(
+							`${botPrefix}set-announcement-channel`,
+						),
+						"Sets the announcement channel for the current platform to the channel where the command was used.",
+						"",
+						formatInlineCode(
+							`${botPrefix}set-announcement-channel <platform: discord|fluxer> <channel-id>`,
+						),
+						"Sets the announcement channel for a specific side of the linked server pair.",
 					].join("\n"),
 				},
 				{
@@ -172,6 +187,9 @@ export class InfoService {
 							`${botPrefix}unlink-user <platform: discord|fluxer> <user-id>`,
 						),
 						"`platform` is the side where the user ID belongs.",
+						"",
+						formatInlineCode(`${botPrefix}unlink-server [code]`),
+						"Starts or confirms permanent removal of this entire server link. This requires confirmation from an administrator in the other linked server and cannot be undone.",
 					].join("\n"),
 				},
 				{
@@ -435,7 +453,7 @@ export class InfoService {
 				name: `${(page - 1) * this.itemsPerPage + index + 1}. ${truncate(getDiscordMemberLabel(discordMember, link.discordUserId))} <-> ${truncate(getFluxerMemberLabel(fluxerMember, link.fluxerUserId))}`,
 				value: [
 					`Priority: \`${link.priority}\``,
-					`Status: \`${fluxerUserIsOwner ? "sync disabled - Fluxer owner" : "active"}\``,
+					`Status: \`${!isLinkEnabled(link) ? "disabled - user missing from a linked server" : fluxerUserIsOwner ? "sync disabled - Fluxer owner" : "active"}\``,
 					`Discord: \`${link.discordUserId}\``,
 					`Fluxer: \`${link.fluxerUserId}\``,
 				].join("\n"),

@@ -166,6 +166,31 @@ export class FluxerPlatform extends EventEmitter {
 			});
 		});
 		this.client.on(
+			GatewayDispatchEvents.GuildCreate,
+			async ({ data }) => {
+				if (!data.id) {
+					return;
+				}
+				this.emit("guildAvailable", {
+					platform: "fluxer",
+					guildId: data.id,
+				});
+			},
+		);
+		this.client.on(
+			GatewayDispatchEvents.GuildDelete,
+			async ({ data }) => {
+				if (!data.id) {
+					return;
+				}
+				this.emit("guildUnavailable", {
+					platform: "fluxer",
+					guildId: data.id,
+					unavailable: Boolean(data.unavailable),
+				});
+			},
+		);
+		this.client.on(
 			GatewayDispatchEvents.MessageCreate,
 			async ({ data }) => {
 				if (!data.guild_id) {
@@ -287,6 +312,19 @@ export class FluxerPlatform extends EventEmitter {
 				});
 			},
 		);
+		this.client.on(
+			GatewayDispatchEvents.GuildRoleDelete,
+			async ({ data }) => {
+				if (!data.guild_id || !data.role_id) {
+					return;
+				}
+				this.emit("roleDelete", {
+					platform: "fluxer",
+					guildId: data.guild_id,
+					roleId: data.role_id,
+				});
+			},
+		);
 		this.client.on("GUILD_ROLE_UPDATE_BULK", async ({ data }) => {
 			for (const role of data.roles ?? []) {
 				this.emit("roleUpdate", {
@@ -309,6 +347,50 @@ export class FluxerPlatform extends EventEmitter {
 					platform: "fluxer",
 					guildId: data.guild_id,
 					channelId: data.id,
+				});
+			},
+		);
+		this.client.on(
+			GatewayDispatchEvents.ChannelDelete,
+			async ({ data }) => {
+				if (!data.guild_id || !data.id) {
+					return;
+				}
+				this.emit("channelDelete", {
+					platform: "fluxer",
+					guildId: data.guild_id,
+					channelId: data.id,
+				});
+			},
+		);
+		this.client.on(
+			GatewayDispatchEvents.GuildMemberAdd,
+			async ({ data }) => {
+				const userId = extractMemberUserId(data);
+				if (!data.guild_id || !userId) {
+					return;
+				}
+				const payload = {
+					platform: "fluxer",
+					guildId: data.guild_id,
+					userId,
+					snapshot: buildMemberSnapshot(data),
+				};
+				this.emit("memberJoin", payload);
+				this.emit("memberUpdate", payload);
+			},
+		);
+		this.client.on(
+			GatewayDispatchEvents.GuildMemberRemove,
+			async ({ data }) => {
+				const userId = extractMemberUserId(data);
+				if (!data.guild_id || !userId) {
+					return;
+				}
+				this.emit("memberLeave", {
+					platform: "fluxer",
+					guildId: data.guild_id,
+					userId,
 				});
 			},
 		);
@@ -374,6 +456,8 @@ export class FluxerPlatform extends EventEmitter {
 					},
 				});
 			},
+			deleteMessage: async () =>
+				this.deleteGuildMessage(data.channel_id, data.id),
 		};
 	}
 	getSelfUserId() {
@@ -463,6 +547,10 @@ export class FluxerPlatform extends EventEmitter {
 			return null;
 		}
 		return channel;
+	}
+	async fetchGuildChannels(guildId) {
+		const channels = await this.request(`/guilds/${guildId}/channels`);
+		return Array.isArray(channels) ? channels : [];
 	}
 	async fetchGuildMessage(channelId, messageId) {
 		return this.request(`/channels/${channelId}/messages/${messageId}`);

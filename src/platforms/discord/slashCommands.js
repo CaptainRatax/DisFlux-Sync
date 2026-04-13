@@ -29,10 +29,12 @@ const COMMAND_OPTION_ORDER = {
 	"link-role": ["priority", "discord-role-id", "fluxer-role-id"],
 	"link-user": ["priority", "discord-user-id", "fluxer-user-id"],
 	"link-me": ["code"],
+	"set-announcement-channel": ["platform", "channel-id"],
 	"sync-user": ["platform", "user-id"],
 	"unlink-channel": ["platform", "channel-id"],
 	"unlink-role": ["platform", "role-id"],
 	"unlink-user": ["platform", "user-id"],
+	"unlink-server": ["code"],
 	"list-channels": ["page"],
 	"list-roles": ["page"],
 	"list-users": ["page"],
@@ -60,6 +62,16 @@ function addPlatformOption(command, name, description) {
 			.setName(name)
 			.setDescription(description)
 			.setRequired(true)
+			.addChoices(...PLATFORM_CHOICES),
+	);
+}
+
+function addOptionalPlatformOption(command, name, description) {
+	return command.addStringOption((option) =>
+		option
+			.setName(name)
+			.setDescription(description)
+			.setRequired(false)
 			.addChoices(...PLATFORM_CHOICES),
 	);
 }
@@ -102,7 +114,7 @@ export function buildDiscordSlashCommands() {
 
 	const setup = createCommand({
 		name: "setup",
-		description: "Start linking this server to the other platform.",
+		description: "Start linking this server and receive the setup code by DM.",
 	}).addStringOption((option) =>
 		option
 			.setName("target-guild-id")
@@ -116,7 +128,7 @@ export function buildDiscordSlashCommands() {
 	}).addStringOption((option) =>
 		option
 			.setName("code")
-			.setDescription("Setup code generated in the other server.")
+			.setDescription("Setup code from your DM.")
 			.setRequired(true),
 	);
 
@@ -200,6 +212,20 @@ export function buildDiscordSlashCommands() {
 			.setRequired(false),
 	);
 
+	const setAnnouncementChannel = addOptionalPlatformOption(
+		createCommand({
+			name: "set-announcement-channel",
+			description: "Set a server pair announcement channel.",
+		}),
+		"platform",
+		"Platform side to update. Omit to use this server.",
+	).addStringOption((option) =>
+		option
+			.setName("channel-id")
+			.setDescription("Channel ID to use. Omit to use this channel.")
+			.setRequired(false),
+	);
+
 	const syncUser = addPlatformOption(
 		createCommand({
 			name: "sync-user",
@@ -272,6 +298,16 @@ export function buildDiscordSlashCommands() {
 			.setRequired(true),
 	);
 
+	const unlinkServer = createCommand({
+		name: "unlink-server",
+		description: "Start or confirm permanent removal of this server link.",
+	}).addStringOption((option) =>
+		option
+			.setName("code")
+			.setDescription("Server unlink confirmation code from your DM.")
+			.setRequired(false),
+	);
+
 	const listChannels = createCommand({
 		name: "list-channels",
 		description: "List linked channels.",
@@ -314,6 +350,7 @@ export function buildDiscordSlashCommands() {
 		linkRole,
 		linkUser,
 		linkMe,
+		setAnnouncementChannel,
 		syncUser,
 		resyncUsers,
 		resyncRoles,
@@ -321,6 +358,7 @@ export function buildDiscordSlashCommands() {
 		unlinkChannel,
 		unlinkRole,
 		unlinkUser,
+		unlinkServer,
 		listChannels,
 		listRoles,
 		listUsers,

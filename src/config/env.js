@@ -37,6 +37,10 @@ const userLinkCodeLength = Math.max(
 	10,
 	parsePositiveInt(process.env.USER_LINK_CODE_LENGTH, 10),
 );
+const serverUnlinkCodeLength = Math.max(
+	10,
+	parsePositiveInt(process.env.SERVER_UNLINK_CODE_LENGTH, setupCodeLength),
+);
 
 export const env = {
 	nodeEnv: process.env.NODE_ENV?.trim() || "development",
@@ -59,6 +63,19 @@ export const env = {
 		process.env.USER_LINK_CODE_TTL_MINUTES,
 		setupCodeTtlMinutes,
 	),
+	serverUnlinkCodeLength,
+	serverUnlinkCodeTtlMinutes: parsePositiveInt(
+		process.env.SERVER_UNLINK_CODE_TTL_MINUTES,
+		setupCodeTtlMinutes,
+	),
 	messageLinkTtlDays: parsePositiveInt(process.env.MESSAGE_LINK_TTL_DAYS, 30),
+	linkDisposeAfterDays: parsePositiveInt(
+		process.env.LINK_DISPOSE_AFTER_DAYS,
+		30,
+	),
+	serverLinkDisableGraceMinutes: parsePositiveInt(
+		process.env.SERVER_LINK_DISABLE_GRACE_MINUTES,
+		10,
+	),
 	httpPort: Number(process.env.HTTP_PORT || 3000),
 };

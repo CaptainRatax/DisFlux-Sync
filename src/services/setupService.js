@@ -37,6 +37,16 @@ function getOtherPlatform(platform) {
 	throw new Error(`Unsupported platform: ${platform}`);
 }
 
+function formatPlatformLabel(platform) {
+	if (platform === "discord") {
+		return "Discord";
+	}
+	if (platform === "fluxer") {
+		return "Fluxer";
+	}
+	return "Unknown";
+}
+
 export class SetupService {
 	constructor({
 		mongo,
@@ -68,6 +78,7 @@ export class SetupService {
 		const normalizedTargetGuildId = sanitizePlatformId(targetGuildId);
 		const sourceGuildId = sanitizePlatformId(context.guildId);
 		const sourceUserId = sanitizePlatformId(context.userId);
+		const sourceChannelId = sanitizePlatformId(context.channelId);
 
 		if (!normalizedTargetGuildId || !sourceGuildId || !sourceUserId) {
 			await context.reply(
@@ -81,6 +92,12 @@ export class SetupService {
 
 		const sourceClient = this.platforms[sourcePlatform];
 		const targetClient = this.platforms[targetPlatform];
+		if (typeof sourceClient.sendDirectMessage !== "function") {
+			await context.reply(
+				"I cannot send direct messages on this platform, so no setup code was created.",
+			);
+			return;
+		}
 
 		const userIsAdmin = await sourceClient.userHasAdministrator(
 			sourceGuildId,
@@ -142,15 +159,17 @@ export class SetupService {
 		});
 
 		const code = await this.createUniqueCode();
+		const formattedCode = formatSetupCode(code);
 		const now = new Date();
 		const expiresAt = new Date(
 			now.getTime() + this.setupCodeTtlMinutes * 60 * 1000,
 		);
 
-		await this.pendingSetups.insertOne({
+		const insertResult = await this.pendingSetups.insertOne({
 			code,
 			sourcePlatform,
 			sourceGuildId,
+			sourceChannelId,
 			targetPlatform,
 			targetGuildId: normalizedTargetGuildId,
 			sourceRequestedByUserId: sourceUserId,
@@ -158,11 +177,35 @@ export class SetupService {
 			expiresAt,
 		});
 
+		let dmSent = false;
+		try {
+			dmSent = await sourceClient.sendDirectMessage(
+				sourceUserId,
+				[
+					`Your DisFlux Sync setup code for ${formatPlatformLabel(targetPlatform)} is: \`${formattedCode}\``,
+					`Run ${formatInlineCode(`${this.getBotPrefix(context)}finish-setup ${formattedCode}`)} inside the target server.`,
+					`This code expires in ${this.setupCodeTtlMinutes} minutes and can only be used once.`,
+					"Do not share it with anyone.",
+				].join("\n"),
+			);
+		} catch {
+			dmSent = false;
+		}
+
+		if (!dmSent) {
+			await this.pendingSetups.deleteOne({
+				_id: insertResult.insertedId,
+			});
+			await context.reply(
+				"I could not send you a DM, so no setup code was kept. Enable DMs from this server and try again.",
+			);
+			return;
+		}
+
 		await context.reply(
 			[
-				`Setup code created for ${targetPlatform}.`,
-				`Code: \`${formatSetupCode(code)}\``,
-				`Run ${formatInlineCode(`${this.getBotPrefix(context)}finish-setup ${formatSetupCode(code)}`)} inside the target server.`,
+				`I sent you a DM with the setup code for ${targetPlatform}.`,
+				`Run ${formatInlineCode(`${this.getBotPrefix(context)}finish-setup <code>`)} inside the target server.`,
 				`This code expires in ${this.setupCodeTtlMinutes} minutes.`,
 			].join("\n"),
 		);
@@ -203,6 +246,7 @@ export class SetupService {
 
 		const currentGuildId = sanitizePlatformId(context.guildId);
 		const currentUserId = sanitizePlatformId(context.userId);
+		const currentChannelId = sanitizePlatformId(context.channelId);
 
 		if (!currentGuildId || !currentUserId) {
 			await context.reply("That setup code is invalid or has expired.");
@@ -297,6 +341,17 @@ export class SetupService {
 
 		const sanitizedDiscordGuildId = sanitizePlatformId(discordGuildId);
 		const sanitizedFluxerGuildId = sanitizePlatformId(fluxerGuildId);
+		const sourceAnnouncementChannelId = sanitizePlatformId(
+			pending.sourceChannelId,
+		);
+		const discordAnnouncementChannelId =
+			pending.sourcePlatform === "discord"
+				? sourceAnnouncementChannelId
+				: currentChannelId;
+		const fluxerAnnouncementChannelId =
+			pending.sourcePlatform === "fluxer"
+				? sourceAnnouncementChannelId
+				: currentChannelId;
 		if (!sanitizedDiscordGuildId || !sanitizedFluxerGuildId) {
 			await this.pendingSetups.deleteOne({ _id: pending._id });
 			await context.reply(
@@ -305,11 +360,19 @@ export class SetupService {
 			return;
 		}
 
+		const now = new Date();
 		await this.serverLinks.insertOne({
 			discordGuildId: sanitizedDiscordGuildId,
 			fluxerGuildId: sanitizedFluxerGuildId,
+			enabled: true,
+			enabledAt: now,
+			enabledReason: "setup_completed",
 			prefix: this.botPrefix,
-			createdAt: new Date(),
+			discordAnnouncementChannelId,
+			fluxerAnnouncementChannelId,
+			announcementChannelsUpdatedAt: now,
+			announcementChannelsUpdatedReason: "setup_completed",
+			createdAt: now,
 		});
 
 		await this.pendingSetups.deleteOne({ _id: pending._id });

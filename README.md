@@ -42,6 +42,7 @@ Use the official hosted bots if you just want to set up synchronization for your
 - Optional synchronization of other bot messages per linked channel
 - Optional synchronization of webhook messages per linked channel
 - Paginated list commands for linked channels, roles, and users
+- Cross-server confirmation before permanently removing a server link
 - Minimal data retention by design
 
 ## Status Page
@@ -146,10 +147,16 @@ SETUP_CODE_LENGTH=10
 SETUP_CODE_TTL_MINUTES=15
 USER_LINK_CODE_LENGTH=10
 USER_LINK_CODE_TTL_MINUTES=15
+SERVER_UNLINK_CODE_LENGTH=10
+SERVER_UNLINK_CODE_TTL_MINUTES=15
 MESSAGE_LINK_TTL_DAYS=30
+LINK_DISPOSE_AFTER_DAYS=30
+SERVER_LINK_DISABLE_GRACE_MINUTES=10
 ```
 
 `USER_LINK_CODE_LENGTH` has a minimum of 10 characters even if a lower value is configured.
+`SERVER_UNLINK_CODE_LENGTH` also has a minimum of 10 characters.
+`SERVER_LINK_DISABLE_GRACE_MINUTES` controls how long a server must remain unconfirmed before syncs are disabled and a warning is sent.
 
 ## Running the Bot
 
@@ -183,13 +190,24 @@ From Discord:
 .setup <fluxer-server-id>
 ```
 
-Then, in the linked Fluxer server:
+The bot sends the setup code by DM to the administrator who ran the command. Then, in the linked Fluxer server:
 
 ```text
 .finish-setup <code>
 ```
 
 You can also start the flow from Fluxer and finish it in Discord.
+
+The channels where `.setup` and `.finish-setup` are run are saved as the default announcement channels for each side of the server pair. These channels receive lifecycle warnings, such as linked channels or roles being removed because one side was deleted.
+
+You can change an announcement channel later:
+
+```text
+.set-announcement-channel
+.set-announcement-channel <platform: discord|fluxer> <channel-id>
+```
+
+Without arguments, the current channel becomes the announcement channel for the current platform. With arguments, the selected Discord or Fluxer channel ID is saved for that side of the linked server pair.
 
 ### 2. Link channels
 
@@ -282,6 +300,20 @@ Examples:
 .unlink-user discord 123456789012345678
 ```
 
+### 6. Permanently unlink the server pair
+
+```text
+.unlink-server
+```
+
+The bot sends a one-time confirmation code by DM to the administrator who started the flow. Then an administrator in the other linked server must run:
+
+```text
+.unlink-server <code>
+```
+
+This permanently removes the server link and all related channel links, role links, user links, cached message mappings, and pending link codes. This action cannot be undone.
+
 ## Available Commands
 
 On Discord, the commands below are also available as slash commands with the same names and guided options, for example `/link-channel`.
@@ -296,11 +328,15 @@ Changes the shared prefix for the linked Discord and Fluxer servers. The prefix 
 
 ### `.setup <target-guild-id>`
 
-Starts the server linking process from the current server.
+Starts the server linking process from the current server. The setup code is sent by DM and is not posted in the server channel.
 
 ### `.finish-setup <code>`
 
-Completes the server linking process in the target server.
+Completes the server linking process in the target server using the setup code from DM.
+
+### `.set-announcement-channel [platform: discord|fluxer] [channel-id]`
+
+Changes the announcement channel for the linked server pair. Without arguments, the command channel becomes the announcement channel for the current platform. With arguments, the selected channel ID is saved for the chosen platform.
 
 ### `.link-channel <priority: discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <sync-bots: yes|no> <sync-webhooks: yes|no>`
 
@@ -346,6 +382,10 @@ Removes a role link. `platform` is the side where the role ID belongs.
 
 Removes a user link. `platform` is the side where the user ID belongs.
 
+### `.unlink-server [code]`
+
+Starts or confirms permanent removal of the current linked server pair. Without a code, the bot sends a confirmation code by DM to the administrator who ran the command. With a code, an administrator in the other linked server confirms the removal. This deletes the server link, channel links, role links, user links, cached message mappings, and pending link codes. This action cannot be undone.
+
 ### `.list-channels [page]`
 
 Lists linked channels in embeds with pagination.
@@ -376,6 +416,12 @@ DisFlux Sync currently supports real-time synchronization for supported linked e
 ## Important Notes
 
 - Only server administrators can use setup and administrative link commands. `.link-me` is available to any user in a linked server.
+- Generated setup, user link, and server unlink codes are sent by DM. The bot also tries to delete prefix command messages that contain confirmation codes after processing them.
+- `.unlink-server` requires administrator confirmation from both linked servers and permanently removes all saved data for that server link.
+- If a linked channel or role is deleted, the link is removed and the bot announces it in both configured announcement channels.
+- If the bot is removed from one linked server, syncs are disabled and the bot announces the 30-day deletion deadline in the other configured announcement channel.
+- Temporary Fluxer availability failures are held for `SERVER_LINK_DISABLE_GRACE_MINUTES` before the server link is disabled, so slow responses do not immediately spam announcements.
+- If an older server link has no announcement channel configured, the bot falls back to the first text channel it can use and includes setup instructions in the warning.
 - The bot must have the permissions required to manage the linked resources
 - Some actions can fail safely if the target role or member is above the bot in the hierarchy
 - Unsupported content may be skipped or mirrored in a simplified form
