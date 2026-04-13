@@ -14,18 +14,28 @@ import {
 	PermissionsBitField,
 	REST,
 	Routes,
+	WebhookClient,
 } from "discord.js";
 import { logger } from "../../core/logger.js";
 import {
 	buildDiscordSlashCommands,
 	getDiscordSlashCommandArgs,
 } from "./slashCommands.js";
+const BRIDGE_WEBHOOK_NAME = "DisFlux Sync Bridge";
+
 function getUserDisplayName(user, member) {
 	return (
 		member?.displayName ??
 		user?.globalName ??
 		user?.username ??
 		"Unknown User"
+	);
+}
+function getUserAvatarUrl(user, member) {
+	return (
+		member?.displayAvatarURL?.({ extension: "png", size: 128 }) ??
+		user?.displayAvatarURL?.({ extension: "png", size: 128 }) ??
+		null
 	);
 }
 function getInteractionDisplayName(interaction) {
@@ -61,6 +71,101 @@ function normalizeReplyPayload(payload) {
 		return { content: payload };
 	}
 	return payload ?? {};
+}
+function getDiscordMessageLink(messageReference) {
+	if (!messageReference?.messageId) {
+		return null;
+	}
+	if (!messageReference.guildId || !messageReference.channelId) {
+		return null;
+	}
+	return `https://discord.com/channels/${messageReference.guildId}/${messageReference.channelId}/${messageReference.messageId}`;
+}
+function getReplyFallbackLine(payload) {
+	const messageLink = getDiscordMessageLink(payload.messageReference);
+	if (messageLink) {
+		return `Replying to: ${messageLink}`;
+	}
+	if (payload.messageReference?.messageId) {
+		return `Replying to bridged message: ${payload.messageReference.messageId}`;
+	}
+	return null;
+}
+function getMessageContent(
+	payload,
+	{ useFallbackContent = false, includeReferenceFallback = false } = {},
+) {
+	const content = useFallbackContent
+		? payload.fallbackContent ?? payload.content ?? ""
+		: payload.content ?? "";
+	const replyFallback = includeReferenceFallback
+		? getReplyFallbackLine(payload)
+		: null;
+	if (!replyFallback) {
+		return content;
+	}
+	if (!String(content).trim()) {
+		return replyFallback;
+	}
+	return [replyFallback, content].join("\n");
+}
+function getEditMessageContent(payload, useFallbackContent = false) {
+	if (useFallbackContent) {
+		return payload.fallbackContent ?? payload.content ?? "";
+	}
+	return payload.content ?? "";
+}
+function buildDiscordMessagePayload(
+	payload,
+	{
+		useFallbackContent = false,
+		includeFiles = true,
+		includeReference = true,
+		includeReferenceFallback = false,
+		includeWebhookIdentity = false,
+	} = {},
+) {
+	const messagePayload = {
+		content: getMessageContent(payload, {
+			useFallbackContent,
+			includeReferenceFallback,
+		}),
+		allowedMentions: payload.allowedMentions ?? undefined,
+		embeds: payload.embeds ?? undefined,
+		files:
+			includeFiles && payload.files?.length
+				? payload.files.map((file) => ({
+						attachment: file.buffer,
+						name: file.name,
+						description: file.description ?? undefined,
+					}))
+				: undefined,
+	};
+
+	if (includeReference && payload.messageReference?.messageId) {
+		messagePayload.reply = {
+			messageReference: payload.messageReference.messageId,
+			failIfNotExists: false,
+		};
+	}
+
+	if (includeWebhookIdentity) {
+		messagePayload.username =
+			payload.webhookIdentity?.username ?? undefined;
+		messagePayload.avatarURL =
+			payload.webhookIdentity?.avatarUrl ?? undefined;
+	}
+
+	return messagePayload;
+}
+function getWebhookCredentials(webhook) {
+	if (!webhook?.id || !webhook?.token) {
+		return null;
+	}
+	return {
+		id: String(webhook.id),
+		token: String(webhook.token),
+	};
 }
 function buildMemberSnapshot(member) {
 	const roleIds = new Set(
@@ -420,6 +525,7 @@ export class DiscordPlatform extends EventEmitter {
 			args: getDiscordSlashCommandArgs(interaction),
 			content: `/${interaction.commandName}`,
 			displayName: getInteractionDisplayName(interaction),
+			avatarUrl: getUserAvatarUrl(interaction.user, interaction.member),
 			referenceMessageId: null,
 			mentionUserIds: [],
 			mentionRoleIds: [],
@@ -431,6 +537,7 @@ export class DiscordPlatform extends EventEmitter {
 			attachmentsCount: 0,
 			isBotAuthor: false,
 			isWebhookMessage: false,
+			webhookId: null,
 			isSelfMessage: Boolean(
 				selfUserId && interaction.user?.id === selfUserId,
 			),
@@ -466,6 +573,7 @@ export class DiscordPlatform extends EventEmitter {
 			messageId: message.id,
 			content: message.content ?? "",
 			displayName: getUserDisplayName(message.author, message.member),
+			avatarUrl: getUserAvatarUrl(message.author, message.member),
 			referenceMessageId: message.reference?.messageId ?? null,
 			mentionUserIds: [...message.mentions.users.keys()],
 			mentionRoleIds: [...message.mentions.roles.keys()],
@@ -477,6 +585,7 @@ export class DiscordPlatform extends EventEmitter {
 			attachmentsCount: message.attachments.size ?? 0,
 			isBotAuthor: Boolean(message.author?.bot),
 			isWebhookMessage: Boolean(message.webhookId),
+			webhookId: message.webhookId ?? null,
 			isSelfMessage: Boolean(
 				selfUserId && message.author?.id === selfUserId,
 			),
@@ -852,29 +961,43 @@ export class DiscordPlatform extends EventEmitter {
 		}
 	}
 	async sendGuildMessage(channelId, payload) {
+		if (payload.webhook?.id && payload.webhook?.token) {
+			const webhookMessage = await this.sendGuildWebhookMessage(
+				channelId,
+				payload,
+			);
+			if (webhookMessage) {
+				return webhookMessage;
+			}
+		}
+
 		try {
 			const channel = await this.client.channels.fetch(channelId);
 			if (!channel || !channel.isTextBased()) {
 				return null;
 			}
-			const messagePayload = {
-				content: payload.content ?? "",
-				allowedMentions: payload.allowedMentions ?? undefined,
-				embeds: payload.embeds ?? undefined,
-				files:
-					payload.files?.map((file) => ({
-						attachment: file.buffer,
-						name: file.name,
-						description: file.description ?? undefined,
-					})) ?? undefined,
-			};
-			if (payload.messageReference?.messageId) {
-				messagePayload.reply = {
-					messageReference: payload.messageReference.messageId,
-					failIfNotExists: false,
-				};
-			}
+			const messagePayload = buildDiscordMessagePayload(payload, {
+				useFallbackContent: true,
+			});
 			return await channel.send(messagePayload);
+		} catch {
+			return null;
+		}
+	}
+	async sendGuildWebhookMessage(channelId, payload) {
+		try {
+			const webhook = new WebhookClient({
+				id: payload.webhook.id,
+				token: payload.webhook.token,
+			});
+			const sent = await webhook.send(
+				buildDiscordMessagePayload(payload, {
+					includeReference: false,
+					includeReferenceFallback: true,
+					includeWebhookIdentity: true,
+				}),
+			);
+			return sent?.id ? { ...sent, id: sent.id } : null;
 		} catch {
 			return null;
 		}
@@ -897,13 +1020,33 @@ export class DiscordPlatform extends EventEmitter {
 		}
 	}
 	async editGuildMessage(channelId, messageId, payload) {
+		if (payload.webhook?.id && payload.webhook?.token) {
+			try {
+				const webhook = new WebhookClient({
+					id: payload.webhook.id,
+					token: payload.webhook.token,
+				});
+				const edited = await webhook.editMessage(
+					messageId,
+					buildDiscordMessagePayload(payload, {
+						includeFiles: false,
+						includeReference: false,
+						includeReferenceFallback: true,
+					}),
+				);
+				if (edited) {
+					return edited;
+				}
+			} catch {}
+		}
+
 		const message = await this.fetchGuildMessage(channelId, messageId);
 		if (!message || !message.editable) {
 			return null;
 		}
 		try {
 			return await message.edit({
-				content: payload.content,
+				content: getEditMessageContent(payload, true),
 				allowedMentions: payload.allowedMentions ?? undefined,
 				embeds: payload.embeds ?? undefined,
 			});
@@ -911,7 +1054,18 @@ export class DiscordPlatform extends EventEmitter {
 			return null;
 		}
 	}
-	async deleteGuildMessage(channelId, messageId) {
+	async deleteGuildMessage(channelId, messageId, options = {}) {
+		if (options.webhook?.id && options.webhook?.token) {
+			try {
+				const webhook = new WebhookClient({
+					id: options.webhook.id,
+					token: options.webhook.token,
+				});
+				await webhook.deleteMessage(messageId);
+				return true;
+			} catch {}
+		}
+
 		const message = await this.fetchGuildMessage(channelId, messageId);
 		if (!message || !message.deletable) {
 			return false;
@@ -921,6 +1075,105 @@ export class DiscordPlatform extends EventEmitter {
 			return true;
 		} catch {
 			return false;
+		}
+	}
+	async deleteGuildChannelWebhook(webhookCredentials) {
+		if (!webhookCredentials?.id || !webhookCredentials?.token) {
+			return false;
+		}
+
+		try {
+			const webhook = new WebhookClient({
+				id: webhookCredentials.id,
+				token: webhookCredentials.token,
+			});
+			await webhook.delete("DisFlux Sync channel link removed");
+			return true;
+		} catch {
+			return false;
+		}
+	}
+	async ensureGuildChannelWebhook(guildId, channelId, existing = null) {
+		const existingCredentials =
+			await this.fetchExistingGuildChannelWebhook(
+				channelId,
+				existing,
+			);
+		if (existingCredentials) {
+			return existingCredentials;
+		}
+
+		const channel = await this.fetchGuildChannel(guildId, channelId);
+		if (
+			!channel ||
+			channel.guildId !== guildId ||
+			!channel.isTextBased() ||
+			typeof channel.createWebhook !== "function"
+		) {
+			return null;
+		}
+
+		const reusableCredentials =
+			await this.fetchReusableGuildChannelWebhook(channel);
+		if (reusableCredentials) {
+			return reusableCredentials;
+		}
+
+		try {
+			const webhook = await channel.createWebhook({
+				name: BRIDGE_WEBHOOK_NAME,
+				reason: "DisFlux Sync message bridge impersonation",
+			});
+			return getWebhookCredentials(webhook);
+		} catch {
+			return null;
+		}
+	}
+	async fetchReusableGuildChannelWebhook(channel) {
+		if (typeof channel.fetchWebhooks !== "function") {
+			return null;
+		}
+
+		try {
+			const selfUserId = this.client.user?.id ?? null;
+			const webhooks = await channel.fetchWebhooks();
+			const webhook = webhooks.find((candidate) => {
+				if (
+					candidate?.name !== BRIDGE_WEBHOOK_NAME ||
+					!candidate?.token
+				) {
+					return false;
+				}
+				if (
+					selfUserId &&
+					candidate.owner?.id &&
+					candidate.owner.id !== selfUserId
+				) {
+					return false;
+				}
+				return true;
+			});
+			return getWebhookCredentials(webhook);
+		} catch {
+			return null;
+		}
+	}
+	async fetchExistingGuildChannelWebhook(channelId, existing = null) {
+		if (!existing?.id || !existing?.token) {
+			return null;
+		}
+
+		try {
+			const webhook = await this.client.fetchWebhook(
+				existing.id,
+				existing.token,
+			);
+			if (webhook?.channelId !== channelId) {
+				return null;
+			}
+			return getWebhookCredentials(webhook);
+		} catch {
+			return null;
 		}
 	}
 	async addReactionToMessage(channelId, messageId, emoji) {

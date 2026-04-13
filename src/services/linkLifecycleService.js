@@ -81,6 +81,25 @@ function getChannelIdForPlatform(channelLink, platform) {
 	return channelLink?.[getChannelFieldName(platform)] ?? null;
 }
 
+function getWebhookIdFieldName(platform) {
+	return platform === "discord" ? "discordWebhookId" : "fluxerWebhookId";
+}
+
+function getWebhookTokenFieldName(platform) {
+	return platform === "discord"
+		? "discordWebhookToken"
+		: "fluxerWebhookToken";
+}
+
+function getWebhookCredentials(channelLink, platform) {
+	const webhookId = channelLink?.[getWebhookIdFieldName(platform)];
+	const webhookToken = channelLink?.[getWebhookTokenFieldName(platform)];
+	if (!webhookId || !webhookToken) {
+		return null;
+	}
+	return { id: String(webhookId), token: String(webhookToken) };
+}
+
 function getAnnouncementChannelIdForPlatform(serverLink, platform) {
 	return serverLink?.[getAnnouncementChannelFieldName(platform)] ?? null;
 }
@@ -1234,6 +1253,7 @@ export class LinkLifecycleService {
 				deletedRoleLinks: 0,
 				deletedUserLinks: 0,
 				deletedMessageLinks: 0,
+				deletedManagedWebhooks: 0,
 				deletedPendingUserLinks: 0,
 				deletedPendingServerUnlinks: 0,
 				deletedPendingSetups: 0,
@@ -1257,6 +1277,14 @@ export class LinkLifecycleService {
 				},
 			);
 		}
+
+		const channelLinksForCleanup = await this.channelLinks
+			.find({ serverLinkId: serverLinkIdFilter })
+			.toArray();
+		const deletedManagedWebhooks =
+			await this.deleteManagedChannelWebhooksForLinks(
+				channelLinksForCleanup,
+			);
 
 		const [
 			messageResult,
@@ -1290,6 +1318,7 @@ export class LinkLifecycleService {
 			deletedRoleLinks: roleResult.deletedCount ?? 0,
 			deletedUserLinks: userResult.deletedCount ?? 0,
 			deletedMessageLinks: messageResult.deletedCount ?? 0,
+			deletedManagedWebhooks,
 			deletedPendingUserLinks: pendingUserResult.deletedCount ?? 0,
 			deletedPendingServerUnlinks:
 				pendingServerUnlinkResult.deletedCount ?? 0,
@@ -1307,11 +1336,54 @@ export class LinkLifecycleService {
 		return result;
 	}
 
+	async deleteManagedChannelWebhooksForLinks(channelLinks) {
+		let deleted = 0;
+		for (const channelLink of channelLinks ?? []) {
+			deleted += await this.deleteManagedChannelWebhooks(channelLink);
+		}
+		return deleted;
+	}
+
+	async deleteManagedChannelWebhooks(channelLink) {
+		const results = await Promise.all(
+			["discord", "fluxer"].map(async (platform) => {
+				const webhook = getWebhookCredentials(channelLink, platform);
+				const client = this.platforms[platform];
+				if (
+					!webhook ||
+					typeof client?.deleteGuildChannelWebhook !== "function"
+				) {
+					return false;
+				}
+
+				try {
+					return await client.deleteGuildChannelWebhook(webhook);
+				} catch (error) {
+					logger.warn("Failed to delete managed bridge webhook", {
+						platform,
+						webhookId: webhook.id,
+						channelLinkId: String(channelLink?._id ?? ""),
+						error: error.message,
+					});
+					return false;
+				}
+			}),
+		);
+		return results.filter(Boolean).length;
+	}
+
 	async deleteChannelLinkData(serverLink, channelLink, options = {}) {
 		const channelLinkId = getMongoObjectId(channelLink);
 		if (!channelLinkId) {
-			return { deletedChannelLinks: 0, deletedMessageLinks: 0 };
+			return {
+				deletedChannelLinks: 0,
+				deletedMessageLinks: 0,
+				deletedManagedWebhooks: 0,
+			};
 		}
+
+		const deletedManagedWebhooks =
+			await this.deleteManagedChannelWebhooks(channelLink);
 
 		const serverLinkIdFilter = getServerLinkIdFilter(
 			serverLink?._id ?? channelLink.serverLinkId,
@@ -1338,6 +1410,7 @@ export class LinkLifecycleService {
 		const result = {
 			deletedChannelLinks: channelResult.deletedCount ?? 0,
 			deletedMessageLinks: messageResult.deletedCount ?? 0,
+			deletedManagedWebhooks,
 		};
 
 		logger.info("Channel link data deleted", {

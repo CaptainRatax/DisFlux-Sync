@@ -37,6 +37,32 @@ function getChannelIdFromMessageLink(messageLink, platform) {
 		? messageLink.discordChannelId
 		: messageLink.fluxerChannelId;
 }
+function getWebhookIdFieldName(platform) {
+	return platform === "discord" ? "discordWebhookId" : "fluxerWebhookId";
+}
+function getWebhookTokenFieldName(platform) {
+	return platform === "discord"
+		? "discordWebhookToken"
+		: "fluxerWebhookToken";
+}
+function getWebhookCredentials(channelLink, platform) {
+	const webhookId = channelLink?.[getWebhookIdFieldName(platform)];
+	const webhookToken = channelLink?.[getWebhookTokenFieldName(platform)];
+	if (!webhookId || !webhookToken) {
+		return null;
+	}
+	return {
+		id: String(webhookId),
+		token: String(webhookToken),
+	};
+}
+function isManagedWebhookMessage(channelLink, event) {
+	if (!event.isWebhookMessage || !event.webhookId) {
+		return false;
+	}
+	const webhookId = channelLink?.[getWebhookIdFieldName(event.platform)];
+	return Boolean(webhookId && String(webhookId) === String(event.webhookId));
+}
 function getMessageIdForPlatform(messageLink, platform) {
 	return platform === "discord"
 		? messageLink.discordMessageId
@@ -47,6 +73,32 @@ function escapeMarkdown(value) {
 }
 function unique(values) {
 	return [...new Set(values.filter(Boolean))];
+}
+function truncate(value, maxLength) {
+	const text = String(value ?? "").trim();
+	if (text.length <= maxLength) {
+		return text;
+	}
+	return text.slice(0, maxLength);
+}
+function getWebhookUsername(displayName) {
+	const username = truncate(displayName, 80);
+	return username || "Unknown User";
+}
+function getWebhookAvatarUrl(avatarUrl) {
+	const normalized = String(avatarUrl ?? "").trim();
+	if (!normalized) {
+		return null;
+	}
+	try {
+		const url = new URL(normalized);
+		if (url.protocol !== "http:" && url.protocol !== "https:") {
+			return null;
+		}
+		return url.toString();
+	} catch {
+		return null;
+	}
 }
 function extractIds(regex, text) {
 	const ids = new Set();
@@ -262,6 +314,9 @@ export class MessageBridgeService {
 			if (!channelLink) {
 				return;
 			}
+			if (isManagedWebhookMessage(channelLink, event)) {
+				return;
+			}
 			if (event.isWebhookMessage && !channelLink.syncWebhookMessages) {
 				return;
 			}
@@ -299,22 +354,37 @@ export class MessageBridgeService {
 			if (!transformed) {
 				return;
 			}
+			const outgoing = await this.attachTargetWebhook(
+				serverLink,
+				channelLink,
+				targetPlatform,
+				targetChannelId,
+				transformed,
+			);
 			let sentMessage = await this.platforms[
 				targetPlatform
-			].sendGuildMessage(targetChannelId, transformed);
-			if (!sentMessage?.id && transformed.files?.length) {
-				const fallbackContent = [
-					transformed.content,
+			].sendGuildMessage(targetChannelId, outgoing);
+			if (!sentMessage?.id && outgoing.files?.length) {
+				const contentWithAttachmentUrls = [
+					outgoing.content,
 					"",
-					...transformed.files
+					...outgoing.files
+						.map((file) => file.originalUrl)
+						.filter(Boolean),
+				].join("\n");
+				const fallbackContentWithAttachmentUrls = [
+					outgoing.fallbackContent ?? outgoing.content,
+					"",
+					...outgoing.files
 						.map((file) => file.originalUrl)
 						.filter(Boolean),
 				].join("\n");
 				sentMessage = await this.platforms[
 					targetPlatform
 				].sendGuildMessage(targetChannelId, {
-					...transformed,
-					content: fallbackContent,
+					...outgoing,
+					content: contentWithAttachmentUrls,
+					fallbackContent: fallbackContentWithAttachmentUrls,
 					files: [],
 				});
 			}
@@ -381,14 +451,21 @@ export class MessageBridgeService {
 			const transformed = await this.buildOutgoingPayload(
 				serverLink,
 				event,
-				{ includeReference: false, includeFiles: false },
+				{ includeReference: true, includeFiles: false },
 			);
 			if (!transformed) {
 				return;
 			}
+			const channelLink =
+				await this.findChannelLinkForMessageLink(messageLink);
+			const outgoing = this.attachExistingWebhook(
+				channelLink,
+				targetPlatform,
+				transformed,
+			);
 			const edited = await this.platforms[
 				targetPlatform
-			].editGuildMessage(targetChannelId, targetMessageId, transformed);
+			].editGuildMessage(targetChannelId, targetMessageId, outgoing);
 			if (!edited) {
 				logger.warn("Failed to mirror message edit", {
 					sourcePlatform: event.platform,
@@ -439,9 +516,17 @@ export class MessageBridgeService {
 				messageLink,
 				targetPlatform,
 			);
+			const channelLink =
+				await this.findChannelLinkForMessageLink(messageLink);
 			await this.platforms[targetPlatform].deleteGuildMessage(
 				targetChannelId,
 				targetMessageId,
+				{
+					webhook: getWebhookCredentials(
+						channelLink,
+						targetPlatform,
+					),
+				},
 			);
 			await this.messageLinks.deleteOne({ _id: messageLink._id });
 		} catch (error) {
@@ -770,6 +855,9 @@ export class MessageBridgeService {
 			bodyLines.push("[Unsupported message content]");
 		}
 		const finalContent = [
+			...bodyLines,
+		].join("\n");
+		const fallbackContent = [
 			`**${escapeMarkdown(event.displayName ?? "Unknown User")}**`,
 			...bodyLines,
 		].join("\n");
@@ -784,8 +872,13 @@ export class MessageBridgeService {
 		const targetGuildId = getGuildIdForPlatform(serverLink, targetPlatform);
 		return {
 			content: finalContent,
+			fallbackContent,
 			embeds,
 			files,
+			webhookIdentity: {
+				username: getWebhookUsername(event.displayName),
+				avatarUrl: getWebhookAvatarUrl(event.avatarUrl),
+			},
 			messageReference: reference
 				? {
 						messageId: getMessageIdForPlatform(
@@ -828,6 +921,78 @@ export class MessageBridgeService {
 			roleLinks,
 			userLinks: userLinks.filter(isLinkEnabled),
 		};
+	}
+	async attachTargetWebhook(
+		serverLink,
+		channelLink,
+		targetPlatform,
+		targetChannelId,
+		payload,
+	) {
+		const targetGuildId = getGuildIdForPlatform(serverLink, targetPlatform);
+		const webhook = await this.platforms[
+			targetPlatform
+		].ensureGuildChannelWebhook(
+			targetGuildId,
+			targetChannelId,
+			getWebhookCredentials(channelLink, targetPlatform),
+		);
+		if (!webhook?.id || !webhook?.token) {
+			return payload;
+		}
+
+		await this.storeChannelWebhookCredentials(
+			channelLink,
+			targetPlatform,
+			webhook,
+		);
+		return { ...payload, webhook };
+	}
+	attachExistingWebhook(channelLink, targetPlatform, payload) {
+		const webhook = getWebhookCredentials(channelLink, targetPlatform);
+		return webhook ? { ...payload, webhook } : payload;
+	}
+	async storeChannelWebhookCredentials(channelLink, platform, webhook) {
+		if (!channelLink?._id || !webhook?.id || !webhook?.token) {
+			return;
+		}
+		const webhookIdField = getWebhookIdFieldName(platform);
+		const webhookTokenField = getWebhookTokenFieldName(platform);
+		if (
+			channelLink[webhookIdField] === webhook.id &&
+			channelLink[webhookTokenField] === webhook.token
+		) {
+			return;
+		}
+
+		await this.channelLinks.updateOne(
+			{ _id: channelLink._id },
+			{
+				$set: {
+					[webhookIdField]: webhook.id,
+					[webhookTokenField]: webhook.token,
+				},
+			},
+		);
+		channelLink[webhookIdField] = webhook.id;
+		channelLink[webhookTokenField] = webhook.token;
+	}
+	async findChannelLinkForMessageLink(messageLink) {
+		const serverLinkIdFilter = getServerLinkIdFilter(
+			messageLink?.serverLinkId,
+		);
+		if (
+			!serverLinkIdFilter ||
+			!messageLink?.discordChannelId ||
+			!messageLink?.fluxerChannelId
+		) {
+			return null;
+		}
+		return this.channelLinks.findOne({
+			serverLinkId: serverLinkIdFilter,
+			discordChannelId: { $eq: messageLink.discordChannelId },
+			fluxerChannelId: { $eq: messageLink.fluxerChannelId },
+		});
 	}
 	async getEnabledServerLink(serverLinkId) {
 		const sanitizedServerLinkId = sanitizeMongoObjectId(serverLinkId);

@@ -1398,6 +1398,7 @@ export class LinkService {
 				`Role links removed: \`${result.deletedRoleLinks ?? 0}\``,
 				`User links removed: \`${result.deletedUserLinks ?? 0}\``,
 				`Cached message mappings removed: \`${result.deletedMessageLinks ?? 0}\``,
+				`Managed webhooks removed: \`${result.deletedManagedWebhooks ?? 0}\``,
 			].join("\n"),
 		);
 	}
@@ -1595,6 +1596,7 @@ export class LinkService {
 				`Discord channel ID: \`${link.discordChannelId}\``,
 				`Fluxer channel ID: \`${link.fluxerChannelId}\``,
 				`Cached message mappings removed: \`${removed.deletedMessageLinks ?? 0}\``,
+				`Managed webhooks removed: \`${removed.deletedManagedWebhooks ?? 0}\``,
 			].join("\n"),
 		);
 	}
@@ -1707,6 +1709,7 @@ export class LinkService {
 		return {
 			deletedChannelLinks: 1,
 			deletedMessageLinks: removedMessageLinks.deletedCount ?? 0,
+			deletedManagedWebhooks: 0,
 		};
 	}
 	async requireLinkedMemberContext(context) {
