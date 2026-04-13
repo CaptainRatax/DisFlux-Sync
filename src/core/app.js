@@ -13,6 +13,7 @@ import { SetupService } from "../services/setupService.js";
 import { LinkService } from "../services/linkService.js";
 import { SyncService } from "../services/syncService.js";
 import { MessageBridgeService } from "../services/messageBridgeService.js";
+import { LinkLifecycleService } from "../services/linkLifecycleService.js";
 import { InfoService } from "../services/infoService.js";
 import { PrefixService } from "../services/prefixService.js";
 import { HttpServer } from "../api/server.js";
@@ -46,6 +47,7 @@ export class App {
 		this.linkService = null;
 		this.syncService = null;
 		this.messageBridgeService = null;
+		this.linkLifecycleService = null;
 		this.infoService = null;
 		this.prefixService = null;
 	}
@@ -63,9 +65,17 @@ export class App {
 			botPrefix: env.botPrefix,
 		});
 
+		this.linkLifecycleService = new LinkLifecycleService({
+			mongo: this.mongo,
+			platforms: this.platforms,
+			disposeAfterDays: env.linkDisposeAfterDays,
+			disableGraceMs: env.serverLinkDisableGraceMinutes * 60 * 1000,
+		});
+
 		this.syncService = new SyncService({
 			mongo: this.mongo,
 			platforms: this.platforms,
+			lifecycleService: this.linkLifecycleService,
 		});
 
 		this.linkService = new LinkService({
@@ -73,8 +83,11 @@ export class App {
 			platforms: this.platforms,
 			botPrefix: env.botPrefix,
 			syncService: this.syncService,
+			lifecycleService: this.linkLifecycleService,
 			userLinkCodeLength: env.userLinkCodeLength,
 			userLinkCodeTtlMinutes: env.userLinkCodeTtlMinutes,
+			serverUnlinkCodeLength: env.serverUnlinkCodeLength,
+			serverUnlinkCodeTtlMinutes: env.serverUnlinkCodeTtlMinutes,
 		});
 
 		this.messageBridgeService = new MessageBridgeService({
@@ -110,9 +123,11 @@ export class App {
 			prefixService: this.prefixService,
 		});
 
+		await this.linkLifecycleService.start();
 		await this.httpServer.start();
 		await this.discord.start();
 		await this.fluxer.start();
+		await this.linkLifecycleService.reconcileAll();
 		await this.syncService.start();
 		await this.messageBridgeService.start();
 
@@ -124,6 +139,7 @@ export class App {
 
 		await Promise.allSettled([
 			Promise.resolve(this.httpServer.stop()),
+			Promise.resolve(this.linkLifecycleService?.stop()),
 			Promise.resolve(this.discord.stop()),
 			Promise.resolve(this.fluxer.stop()),
 			this.mongo.close(),

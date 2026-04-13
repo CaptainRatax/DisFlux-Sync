@@ -5,6 +5,10 @@
 
 import { logger } from "../core/logger.js";
 import {
+	getServerLinkIdFilter,
+	isLinkEnabled,
+} from "./linkLifecycleService.js";
+import {
 	sanitizeMongoObjectId,
 	sanitizePlatformId,
 } from "../utils/sanitize.js";
@@ -277,7 +281,7 @@ export class MessageBridgeService {
 			const serverLink = await this.serverLinks.findOne({
 				_id: { $eq: serverLinkId },
 			});
-			if (!serverLink) {
+			if (!isLinkEnabled(serverLink)) {
 				return;
 			}
 			const targetChannelId = getChannelIdForPlatform(
@@ -359,19 +363,13 @@ export class MessageBridgeService {
 			) {
 				return;
 			}
-			const serverLinkId = sanitizeMongoObjectId(
+			const targetPlatform = getOppositePlatform(event.platform);
+			const serverLink = await this.getEnabledServerLink(
 				messageLink.serverLinkId,
 			);
-			if (!serverLinkId) {
-				return;
-			}
-			const serverLink = await this.serverLinks.findOne({
-				_id: { $eq: serverLinkId },
-			});
 			if (!serverLink) {
 				return;
 			}
-			const targetPlatform = getOppositePlatform(event.platform);
 			const targetChannelId = getChannelIdFromMessageLink(
 				messageLink,
 				targetPlatform,
@@ -427,6 +425,12 @@ export class MessageBridgeService {
 				return;
 			}
 			const targetPlatform = getOppositePlatform(event.platform);
+			const serverLink = await this.getEnabledServerLink(
+				messageLink.serverLinkId,
+			);
+			if (!serverLink) {
+				return;
+			}
 			const targetChannelId = getChannelIdFromMessageLink(
 				messageLink,
 				targetPlatform,
@@ -468,6 +472,12 @@ export class MessageBridgeService {
 				return;
 			}
 			const targetPlatform = getOppositePlatform(event.platform);
+			const serverLink = await this.getEnabledServerLink(
+				messageLink.serverLinkId,
+			);
+			if (!serverLink) {
+				return;
+			}
 			const targetChannelId = getChannelIdFromMessageLink(
 				messageLink,
 				targetPlatform,
@@ -510,6 +520,12 @@ export class MessageBridgeService {
 				return;
 			}
 			const targetPlatform = getOppositePlatform(event.platform);
+			const serverLink = await this.getEnabledServerLink(
+				messageLink.serverLinkId,
+			);
+			if (!serverLink) {
+				return;
+			}
 			const targetChannelId = getChannelIdFromMessageLink(
 				messageLink,
 				targetPlatform,
@@ -552,6 +568,12 @@ export class MessageBridgeService {
 				return;
 			}
 			const targetPlatform = getOppositePlatform(event.platform);
+			const serverLink = await this.getEnabledServerLink(
+				messageLink.serverLinkId,
+			);
+			if (!serverLink) {
+				return;
+			}
 			const targetChannelId = getChannelIdFromMessageLink(
 				messageLink,
 				targetPlatform,
@@ -592,6 +614,12 @@ export class MessageBridgeService {
 				return;
 			}
 			const targetPlatform = getOppositePlatform(event.platform);
+			const serverLink = await this.getEnabledServerLink(
+				messageLink.serverLinkId,
+			);
+			if (!serverLink) {
+				return;
+			}
 			const targetChannelId = getChannelIdFromMessageLink(
 				messageLink,
 				targetPlatform,
@@ -786,12 +814,30 @@ export class MessageBridgeService {
 		};
 	}
 	async loadMappings(serverLinkId) {
+		const serverLinkIdFilter = getServerLinkIdFilter(serverLinkId);
+		if (!serverLinkIdFilter) {
+			return { channelLinks: [], roleLinks: [], userLinks: [] };
+		}
 		const [channelLinks, roleLinks, userLinks] = await Promise.all([
-			this.channelLinks.find({ serverLinkId }).toArray(),
-			this.roleLinks.find({ serverLinkId }).toArray(),
-			this.userLinks.find({ serverLinkId }).toArray(),
+			this.channelLinks.find({ serverLinkId: serverLinkIdFilter }).toArray(),
+			this.roleLinks.find({ serverLinkId: serverLinkIdFilter }).toArray(),
+			this.userLinks.find({ serverLinkId: serverLinkIdFilter }).toArray(),
 		]);
-		return { channelLinks, roleLinks, userLinks };
+		return {
+			channelLinks,
+			roleLinks,
+			userLinks: userLinks.filter(isLinkEnabled),
+		};
+	}
+	async getEnabledServerLink(serverLinkId) {
+		const sanitizedServerLinkId = sanitizeMongoObjectId(serverLinkId);
+		if (!sanitizedServerLinkId) {
+			return null;
+		}
+		const serverLink = await this.serverLinks.findOne({
+			_id: { $eq: sanitizedServerLinkId },
+		});
+		return isLinkEnabled(serverLink) ? serverLink : null;
 	}
 	async fetchRoleNameFallbacks(platform, guildId, roleIds) {
 		const result = new Map();
@@ -820,10 +866,10 @@ export class MessageBridgeService {
 		return result;
 	}
 	async resolveReplyReference(serverLinkId, sourcePlatform, sourceMessageId) {
-		const sanitizedServerLinkId = sanitizeMongoObjectId(serverLinkId);
+		const serverLinkIdFilter = getServerLinkIdFilter(serverLinkId);
 		const sanitizedSourceMessageId =
 			sanitizePlatformId(sourceMessageId);
-		if (!sanitizedServerLinkId || !sanitizedSourceMessageId) {
+		if (!serverLinkIdFilter || !sanitizedSourceMessageId) {
 			return null;
 		}
 		const sourceField =
@@ -831,7 +877,7 @@ export class MessageBridgeService {
 				? "discordMessageId"
 				: "fluxerMessageId";
 		return this.messageLinks.findOne({
-			serverLinkId: { $eq: sanitizedServerLinkId },
+			serverLinkId: serverLinkIdFilter,
 			[sourceField]: { $eq: sanitizedSourceMessageId },
 		});
 	}

@@ -5,6 +5,7 @@
 
 import { createHash } from "node:crypto";
 
+import { isLinkEnabled } from "./linkLifecycleService.js";
 import {
 	generateSetupCode,
 	formatSetupCode,
@@ -93,6 +94,15 @@ function getChannelFieldName(platform) {
 	}
 	throw new Error(`Unsupported platform: ${platform}`);
 }
+function getAnnouncementChannelFieldName(platform) {
+	if (platform === "discord") {
+		return "discordAnnouncementChannelId";
+	}
+	if (platform === "fluxer") {
+		return "fluxerAnnouncementChannelId";
+	}
+	throw new Error(`Unsupported platform: ${platform}`);
+}
 function getRoleFieldName(platform) {
 	if (platform === "discord") {
 		return "discordRoleId";
@@ -175,6 +185,12 @@ function formatUserSyncResultLines(syncResult) {
 		...(syncResult.skippedFluxerOwner
 			? ["Sync skipped: `Fluxer owner cannot be synchronized`"]
 			: []),
+		...(syncResult.skippedDisabledServer
+			? ["Sync skipped: `server link is disabled`"]
+			: []),
+		...(syncResult.skippedDisabledUser
+			? ["Sync skipped: `user link is disabled`"]
+			: []),
 		`Member snapshots fetched: \`${!syncResult.skipped}\``,
 		`Linked roles checked: \`${syncResult.roleLinkCount}\``,
 		`Role membership differences: \`${membershipSummary.differences ?? 0}\``,
@@ -190,6 +206,7 @@ function formatRoleMetadataSummaryLines(summary) {
 		`Role metadata differences: \`${summary?.differences ?? 0}\``,
 		`Role metadata changes applied: \`${summary?.changed ?? 0}\``,
 		`Role metadata changes failed: \`${summary?.failed ?? 0}\``,
+		`Disabled server skips: \`${summary?.skippedDisabled ?? 0}\``,
 		`Unsupported priorities skipped: \`${summary?.skippedUnsupported ?? 0}\``,
 		`Missing source roles skipped: \`${summary?.skippedMissingSource ?? 0}\``,
 		`Missing target roles skipped: \`${summary?.skippedMissingTarget ?? 0}\``,
@@ -204,6 +221,7 @@ function formatChannelMetadataSummaryLines(summary) {
 		`Channel data or permission differences: \`${summary?.differences ?? 0}\``,
 		`Channel changes applied: \`${summary?.changed ?? 0}\``,
 		`Channel changes failed: \`${summary?.failed ?? 0}\``,
+		`Disabled server skips: \`${summary?.skippedDisabled ?? 0}\``,
 		`Unsupported priorities skipped: \`${summary?.skippedUnsupported ?? 0}\``,
 		`Missing channel IDs skipped: \`${summary?.skippedMissingIds ?? 0}\``,
 		`Missing source channels skipped: \`${summary?.skippedMissingSource ?? 0}\``,
@@ -219,8 +237,11 @@ export class LinkService {
 		platforms,
 		botPrefix,
 		syncService = null,
+		lifecycleService = null,
 		userLinkCodeLength = 10,
 		userLinkCodeTtlMinutes = 15,
+		serverUnlinkCodeLength = 10,
+		serverUnlinkCodeTtlMinutes = 15,
 	}) {
 		this.serverLinks = mongo.collection("server_links");
 		this.channelLinks = mongo.collection("channel_links");
@@ -228,11 +249,18 @@ export class LinkService {
 		this.userLinks = mongo.collection("user_links");
 		this.messageLinks = mongo.collection("message_links");
 		this.pendingUserLinks = mongo.collection("pending_user_links");
+		this.pendingServerUnlinks = mongo.collection("pending_server_unlinks");
 		this.platforms = platforms;
 		this.botPrefix = botPrefix;
 		this.syncService = syncService;
+		this.lifecycleService = lifecycleService;
 		this.userLinkCodeLength = Math.max(10, userLinkCodeLength);
 		this.userLinkCodeTtlMinutes = userLinkCodeTtlMinutes;
+		this.serverUnlinkCodeLength = Math.max(
+			10,
+			serverUnlinkCodeLength,
+		);
+		this.serverUnlinkCodeTtlMinutes = serverUnlinkCodeTtlMinutes;
 	}
 	getBotPrefix(context) {
 		return context.botPrefix ?? this.botPrefix;
@@ -728,12 +756,16 @@ export class LinkService {
 			await context.reply("That Fluxer user is already linked.");
 			return;
 		}
+		const now = new Date();
 		const userLink = {
 			serverLinkId: base.serverLinkId,
 			discordUserId,
 			fluxerUserId,
 			priority,
-			createdAt: new Date(),
+			enabled: true,
+			enabledAt: now,
+			enabledReason: "link_user_created",
+			createdAt: now,
 		};
 		const result = await this.userLinks.insertOne(userLink);
 		userLink._id = result.insertedId;
@@ -956,6 +988,12 @@ export class LinkService {
 			return;
 		}
 		serverLink._id = serverLinkId;
+		if (!isLinkEnabled(serverLink)) {
+			await context.reply(
+				"The saved server link is disabled because the bot is missing from one of the linked servers. The user link code was discarded.",
+			);
+			return;
+		}
 
 		const sourceMember = await this.platforms[
 			pending.sourcePlatform
@@ -1029,12 +1067,16 @@ export class LinkService {
 			return;
 		}
 
+		const now = new Date();
 		const userLink = {
 			serverLinkId,
 			discordUserId,
 			fluxerUserId,
 			priority: pending.priority,
-			createdAt: new Date(),
+			enabled: true,
+			enabledAt: now,
+			enabledReason: "link_me_completed",
+			createdAt: now,
 		};
 
 		try {
@@ -1061,6 +1103,301 @@ export class LinkService {
 				`Discord user ID: \`${discordUserId}\``,
 				`Fluxer user ID: \`${fluxerUserId}\``,
 				...formatUserSyncResultLines(syncResult),
+			].join("\n"),
+		);
+	}
+	async handleSetAnnouncementChannel(context, platformRaw, channelRaw) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+
+		const hasPlatformArg =
+			platformRaw !== undefined &&
+			platformRaw !== null &&
+			String(platformRaw).trim() !== "";
+		const hasChannelArg =
+			channelRaw !== undefined &&
+			channelRaw !== null &&
+			String(channelRaw).trim() !== "";
+		const usage = `Usage: ${this.getBotPrefix(context)}set-announcement-channel [channel-id] or ${this.getBotPrefix(context)}set-announcement-channel <platform: discord|fluxer> <channel-id>`;
+
+		let platform = context.platform;
+		let channelId = normalizeRequiredId(context.channelId);
+
+		if (hasPlatformArg && hasChannelArg) {
+			platform = normalizePlatform(platformRaw);
+			channelId = normalizeRequiredId(channelRaw);
+		} else if (hasPlatformArg) {
+			const requestedPlatform = normalizePlatform(platformRaw);
+			if (requestedPlatform) {
+				platform = requestedPlatform;
+				if (platform !== context.platform) {
+					await context.reply(
+						`Provide a channel ID when setting the ${formatPlatformLabel(platform)} announcement channel from ${formatPlatformLabel(context.platform)}.`,
+					);
+					return;
+				}
+			} else {
+				channelId = normalizeRequiredId(platformRaw);
+			}
+		} else if (hasChannelArg) {
+			channelId = normalizeRequiredId(channelRaw);
+		}
+
+		if (!platform || !channelId) {
+			await context.reply(usage);
+			return;
+		}
+
+		const guildId = getGuildIdForPlatform(base.serverLink, platform);
+		if (!guildId) {
+			await context.reply(
+				`The linked ${formatPlatformLabel(platform)} server ID is invalid.`,
+			);
+			return;
+		}
+
+		const client = this.platforms[platform];
+		const channel = await client.fetchGuildChannel(guildId, channelId);
+		if (!channel) {
+			await context.reply(
+				`That ${formatPlatformLabel(platform)} channel does not exist in the linked ${formatPlatformLabel(platform)} server.`,
+			);
+			return;
+		}
+
+		const template = await client.getGuildChannelTemplate(
+			guildId,
+			channelId,
+		);
+		if (template?.kind !== "text") {
+			await context.reply("The announcement channel must be a text channel.");
+			return;
+		}
+
+		const fieldName = getAnnouncementChannelFieldName(platform);
+		const now = new Date();
+		await this.serverLinks.updateOne(
+			{ _id: base.serverLinkId },
+			{
+				$set: {
+					[fieldName]: channelId,
+					announcementChannelsUpdatedAt: now,
+					announcementChannelsUpdatedByPlatform: context.platform,
+					announcementChannelsUpdatedByUserId:
+						normalizeRequiredId(context.userId) ?? null,
+					announcementChannelsUpdatedReason:
+						"manual_set_announcement_channel",
+				},
+			},
+		);
+
+		await context.reply(
+			[
+				"Announcement channel updated successfully.",
+				`Platform: \`${platform}\``,
+				`Channel ID: \`${channelId}\``,
+			].join("\n"),
+		);
+	}
+	async handleUnlinkServer(context, codeRaw) {
+		const hasCode =
+			codeRaw !== undefined &&
+			codeRaw !== null &&
+			String(codeRaw).trim() !== "";
+
+		if (!hasCode) {
+			await this.handleStartUnlinkServer(context);
+			return;
+		}
+
+		const code = sanitizeSetupCode(
+			codeRaw,
+			this.serverUnlinkCodeLength,
+		);
+		if (!code) {
+			await context.reply(
+				`Usage: ${this.getBotPrefix(context)}unlink-server [code]`,
+			);
+			return;
+		}
+
+		await this.handleFinishUnlinkServer(context, code);
+	}
+	async handleStartUnlinkServer(context) {
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+		if (!this.lifecycleService) {
+			await context.reply("Link lifecycle service is not available.");
+			return;
+		}
+
+		const sourcePlatform = context.platform;
+		const targetPlatform = getOtherPlatform(sourcePlatform);
+		const sourceGuildId = getGuildIdForPlatform(
+			base.serverLink,
+			sourcePlatform,
+		);
+		const targetGuildId = getGuildIdForPlatform(
+			base.serverLink,
+			targetPlatform,
+		);
+		const sourceUserId = normalizeRequiredId(context.userId);
+
+		if (!sourceGuildId || !targetGuildId || !sourceUserId) {
+			await context.reply("This server link or user ID is invalid.");
+			return;
+		}
+
+		const sourceClient = this.platforms[sourcePlatform];
+		if (typeof sourceClient.sendDirectMessage !== "function") {
+			await context.reply(
+				"I cannot send direct messages on this platform, so no unlink confirmation code was created.",
+			);
+			return;
+		}
+
+		await this.pendingServerUnlinks.deleteMany({
+			serverLinkId: getServerLinkIdQuery(base.serverLinkId),
+		});
+
+		const code = await this.createUniqueServerUnlinkCode();
+		const formattedCode = formatSetupCode(code);
+		const now = new Date();
+		const expiresAt = new Date(
+			now.getTime() + this.serverUnlinkCodeTtlMinutes * 60 * 1000,
+		);
+		const pendingServerUnlink = {
+			codeHash: hashSetupCode(code),
+			serverLinkId: base.serverLinkId,
+			discordGuildId: base.serverLink.discordGuildId,
+			fluxerGuildId: base.serverLink.fluxerGuildId,
+			sourcePlatform,
+			sourceGuildId,
+			sourceUserId,
+			targetPlatform,
+			targetGuildId,
+			createdAt: now,
+			expiresAt,
+		};
+
+		let insertResult = null;
+		try {
+			insertResult =
+				await this.pendingServerUnlinks.insertOne(
+					pendingServerUnlink,
+				);
+		} catch (error) {
+			if (error?.code === 11000) {
+				await context.reply(
+					"An unlink confirmation code is already pending for this server pair. Try again in a moment.",
+				);
+				return;
+			}
+			throw error;
+		}
+
+		let dmSent = false;
+		try {
+			dmSent = await sourceClient.sendDirectMessage(
+				sourceUserId,
+				[
+					`Your DisFlux Sync server unlink confirmation code is: \`${formattedCode}\``,
+					`Run ${formatInlineCode(`${this.getBotPrefix(context)}unlink-server ${formattedCode}`)} inside the linked ${formatPlatformLabel(targetPlatform)} server to permanently delete this server link.`,
+					"Any administrator in that linked server can run the confirmation command.",
+					`This code expires in ${this.serverUnlinkCodeTtlMinutes} minutes and can only be used once.`,
+					"This action deletes the server link, channel links, role links, user links, cached message mappings, and pending link codes. It cannot be undone.",
+				].join("\n"),
+			);
+		} catch {
+			dmSent = false;
+		}
+
+		if (!dmSent) {
+			await this.pendingServerUnlinks.deleteOne({
+				_id: insertResult.insertedId,
+			});
+			await context.reply(
+				"I could not send you a DM, so no unlink confirmation code was kept. Enable DMs from this server and try again.",
+			);
+			return;
+		}
+
+		await context.reply(
+			[
+				"I sent you a DM with a server unlink confirmation code.",
+				"Warning: this action is irreversible. If confirmed from the linked server, all data for this server link will be deleted.",
+				`Run ${formatInlineCode(`${this.getBotPrefix(context)}unlink-server <code>`)} inside the linked ${formatPlatformLabel(targetPlatform)} server to confirm.`,
+				`The code expires in ${this.serverUnlinkCodeTtlMinutes} minutes and can only be used once.`,
+			].join("\n"),
+		);
+	}
+	async handleFinishUnlinkServer(context, code) {
+		if (!this.lifecycleService) {
+			await context.reply("Link lifecycle service is not available.");
+			return;
+		}
+
+		const pending = await this.pendingServerUnlinks.findOne({
+			codeHash: { $eq: hashSetupCode(code) },
+			expiresAt: { $gt: new Date() },
+		});
+		if (!pending) {
+			await context.reply(
+				"That server unlink code is invalid or has expired.",
+			);
+			return;
+		}
+
+		const base = await this.requireLinkedAdminContext(context);
+		if (!base) {
+			return;
+		}
+
+		const currentGuildId = normalizeRequiredId(context.guildId);
+		if (!currentGuildId) {
+			await context.reply("This server ID is invalid.");
+			return;
+		}
+
+		if (
+			context.platform !== pending.targetPlatform ||
+			currentGuildId !== pending.targetGuildId ||
+			String(base.serverLinkId) !== String(pending.serverLinkId)
+		) {
+			await context.reply(
+				"This server unlink code must be confirmed by an administrator in the other linked server.",
+			);
+			return;
+		}
+
+		const claimed = await this.pendingServerUnlinks.deleteOne({
+			_id: pending._id,
+			codeHash: { $eq: pending.codeHash },
+		});
+		if ((claimed.deletedCount ?? 0) === 0) {
+			await context.reply(
+				"That server unlink code was already used or expired.",
+			);
+			return;
+		}
+
+		const result = await this.lifecycleService.deleteServerLinkData(
+			base.serverLink,
+			{ reason: "manual_unlink_server" },
+		);
+
+		await context.reply(
+			[
+				"Server link removed permanently.",
+				`Server links removed: \`${result.deletedServerLinks ?? 0}\``,
+				`Channel links removed: \`${result.deletedChannelLinks ?? 0}\``,
+				`Role links removed: \`${result.deletedRoleLinks ?? 0}\``,
+				`User links removed: \`${result.deletedUserLinks ?? 0}\``,
+				`Cached message mappings removed: \`${result.deletedMessageLinks ?? 0}\``,
 			].join("\n"),
 		);
 	}
@@ -1171,6 +1508,12 @@ export class LinkService {
 		const summary = await this.syncService.resyncLinkedRoles(
 			base.serverLink,
 		);
+		if (summary.skippedDisabled > 0) {
+			await context.reply(
+				"Role resync skipped because this server link is disabled.",
+			);
+			return;
+		}
 		if (summary.checked === 0) {
 			await context.reply(
 				"There are no linked roles for this server pair.",
@@ -1196,6 +1539,12 @@ export class LinkService {
 		const summary = await this.syncService.resyncLinkedChannels(
 			base.serverLink,
 		);
+		if (summary.skippedDisabled > 0) {
+			await context.reply(
+				"Channel resync skipped because this server link is disabled.",
+			);
+			return;
+		}
 		if (summary.checked === 0) {
 			await context.reply(
 				"There are no linked channels for this server pair.",
@@ -1233,34 +1582,19 @@ export class LinkService {
 			);
 			return;
 		}
-		await this.channelLinks.deleteOne({ _id: link._id });
-		const linkedDiscordChannelId = normalizeRequiredId(
-			link.discordChannelId,
-		);
-		const linkedFluxerChannelId = normalizeRequiredId(
-			link.fluxerChannelId,
-		);
-		const messageLinkFilters = [
-			linkedDiscordChannelId
-				? { discordChannelId: { $eq: linkedDiscordChannelId } }
-				: null,
-			linkedFluxerChannelId
-				? { fluxerChannelId: { $eq: linkedFluxerChannelId } }
-				: null,
-		].filter(Boolean);
-		const removedMessageLinks =
-			messageLinkFilters.length > 0
-				? await this.messageLinks.deleteMany({
-						serverLinkId: getServerLinkIdQuery(base.serverLinkId),
-						$or: messageLinkFilters,
-					})
-				: { deletedCount: 0 };
+		const removed = this.lifecycleService
+			? await this.lifecycleService.deleteChannelLinkData(
+					base.serverLink,
+					link,
+					{ reason: "manual_unlink_channel" },
+				)
+			: await this.deleteChannelLinkDataFallback(base.serverLinkId, link);
 		await context.reply(
 			[
 				"Channel link removed successfully.",
 				`Discord channel ID: \`${link.discordChannelId}\``,
 				`Fluxer channel ID: \`${link.fluxerChannelId}\``,
-				`Cached message mappings removed: \`${removedMessageLinks.deletedCount ?? 0}\``,
+				`Cached message mappings removed: \`${removed.deletedMessageLinks ?? 0}\``,
 			].join("\n"),
 		);
 	}
@@ -1288,7 +1622,15 @@ export class LinkService {
 			);
 			return;
 		}
-		await this.roleLinks.deleteOne({ _id: link._id });
+		if (this.lifecycleService) {
+			await this.lifecycleService.deleteRoleLinkData(
+				base.serverLink,
+				link,
+				{ reason: "manual_unlink_role" },
+			);
+		} else {
+			await this.roleLinks.deleteOne({ _id: link._id });
+		}
 		await context.reply(
 			[
 				"Role link removed successfully.",
@@ -1321,7 +1663,15 @@ export class LinkService {
 			);
 			return;
 		}
-		await this.userLinks.deleteOne({ _id: link._id });
+		if (this.lifecycleService) {
+			await this.lifecycleService.deleteUserLinkData(
+				base.serverLink,
+				link,
+				{ reason: "manual_unlink_user" },
+			);
+		} else {
+			await this.userLinks.deleteOne({ _id: link._id });
+		}
 		await context.reply(
 			[
 				"User link removed successfully.",
@@ -1329,6 +1679,35 @@ export class LinkService {
 				`Fluxer user ID: \`${link.fluxerUserId}\``,
 			].join("\n"),
 		);
+	}
+	async deleteChannelLinkDataFallback(serverLinkId, link) {
+		await this.channelLinks.deleteOne({ _id: link._id });
+		const linkedDiscordChannelId = normalizeRequiredId(
+			link.discordChannelId,
+		);
+		const linkedFluxerChannelId = normalizeRequiredId(
+			link.fluxerChannelId,
+		);
+		const messageLinkFilters = [
+			linkedDiscordChannelId
+				? { discordChannelId: { $eq: linkedDiscordChannelId } }
+				: null,
+			linkedFluxerChannelId
+				? { fluxerChannelId: { $eq: linkedFluxerChannelId } }
+				: null,
+		].filter(Boolean);
+		const removedMessageLinks =
+			messageLinkFilters.length > 0
+				? await this.messageLinks.deleteMany({
+						serverLinkId: getServerLinkIdQuery(serverLinkId),
+						$or: messageLinkFilters,
+					})
+				: { deletedCount: 0 };
+
+		return {
+			deletedChannelLinks: 1,
+			deletedMessageLinks: removedMessageLinks.deletedCount ?? 0,
+		};
 	}
 	async requireLinkedMemberContext(context) {
 		if (!context.guildId) {
@@ -1353,6 +1732,12 @@ export class LinkService {
 			return null;
 		}
 		serverLink._id = serverLinkId;
+		if (!isLinkEnabled(serverLink)) {
+			await context.reply(
+				"This server link is disabled because the bot is missing from one of the linked servers. Add the bot back to both servers before using link commands.",
+			);
+			return null;
+		}
 
 		const guildId = normalizeRequiredId(context.guildId);
 		const userId = normalizeRequiredId(context.userId);
@@ -1400,6 +1785,28 @@ export class LinkService {
 
 		throw new Error("Failed to generate a unique user link code.");
 	}
+	async createUniqueServerUnlinkCode() {
+		for (let attempt = 0; attempt < 10; attempt += 1) {
+			const code = sanitizeSetupCode(
+				generateSetupCode(this.serverUnlinkCodeLength),
+				this.serverUnlinkCodeLength,
+			);
+			if (!code) {
+				continue;
+			}
+			const existing = await this.pendingServerUnlinks.findOne({
+				codeHash: { $eq: hashSetupCode(code) },
+			});
+
+			if (!existing) {
+				return code;
+			}
+		}
+
+		throw new Error(
+			"Failed to generate a unique server unlink confirmation code.",
+		);
+	}
 	async requireLinkedAdminContext(context) {
 		if (!context.guildId) {
 			await context.reply(
@@ -1423,6 +1830,12 @@ export class LinkService {
 			return null;
 		}
 		serverLink._id = serverLinkId;
+		if (!isLinkEnabled(serverLink)) {
+			await context.reply(
+				"This server link is disabled because the bot is missing from one of the linked servers. Add the bot back to both servers before using link commands.",
+			);
+			return null;
+		}
 		const userIsAdmin = await this.platforms[
 			context.platform
 		].userHasAdministrator(context.guildId, context.userId);
