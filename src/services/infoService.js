@@ -143,6 +143,11 @@ export class InfoService {
 						"Sets the announcement channel for the current platform to the channel where the command was used.",
 						"",
 						formatInlineCode(
+							`${botPrefix}set-announcement-channel <channel-id>`,
+						),
+						"Sets the announcement channel for the current platform to the selected channel.",
+						"",
+						formatInlineCode(
 							`${botPrefix}set-announcement-channel <platform: discord|fluxer> <channel-id>`,
 						),
 						"Sets the announcement channel for a specific side of the linked server pair.",

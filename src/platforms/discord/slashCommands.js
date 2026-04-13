@@ -218,11 +218,11 @@ export function buildDiscordSlashCommands() {
 			description: "Set a server pair announcement channel.",
 		}),
 		"platform",
-		"Platform side to update. Omit to use this server.",
+		"Side to update. If it is the other server, channel-id is required.",
 	).addStringOption((option) =>
 		option
 			.setName("channel-id")
-			.setDescription("Channel ID to use. Omit to use this channel.")
+			.setDescription("Channel ID to use. Omit only when updating this server's current channel.")
 			.setRequired(false),
 	);
 

@@ -204,10 +204,11 @@ You can change an announcement channel later:
 
 ```text
 .set-announcement-channel
+.set-announcement-channel <channel-id>
 .set-announcement-channel <platform: discord|fluxer> <channel-id>
 ```
 
-Without arguments, the current channel becomes the announcement channel for the current platform. With arguments, the selected Discord or Fluxer channel ID is saved for that side of the linked server pair.
+Without arguments, the current channel becomes the announcement channel for the current platform. With only a channel ID, that channel is saved for the current platform. With platform and channel ID, the selected Discord or Fluxer channel is saved for that side of the linked server pair.
 
 ### 2. Link channels
 
@@ -334,9 +335,9 @@ Starts the server linking process from the current server. The setup code is sen
 
 Completes the server linking process in the target server using the setup code from DM.
 
-### `.set-announcement-channel [platform: discord|fluxer] [channel-id]`
+### `.set-announcement-channel [channel-id]` / `.set-announcement-channel <platform: discord|fluxer> <channel-id>`
 
-Changes the announcement channel for the linked server pair. Without arguments, the command channel becomes the announcement channel for the current platform. With arguments, the selected channel ID is saved for the chosen platform.
+Changes the announcement channel for the linked server pair. Without arguments, the command channel becomes the announcement channel for the current platform. With only a channel ID, that channel is saved for the current platform. With platform and channel ID, the selected channel is saved for the chosen platform.
 
 ### `.link-channel <priority: discord|fluxer> <discord-channel-id|auto> <fluxer-channel-id|auto> <sync-bots: yes|no> <sync-webhooks: yes|no>`
 

@@ -1120,17 +1120,28 @@ export class LinkService {
 			channelRaw !== undefined &&
 			channelRaw !== null &&
 			String(channelRaw).trim() !== "";
-		const usage = `Usage: ${this.getBotPrefix(context)}set-announcement-channel [platform: discord|fluxer] [channel-id]`;
+		const usage = `Usage: ${this.getBotPrefix(context)}set-announcement-channel [channel-id] or ${this.getBotPrefix(context)}set-announcement-channel <platform: discord|fluxer> <channel-id>`;
 
 		let platform = context.platform;
 		let channelId = normalizeRequiredId(context.channelId);
 
-		if (hasPlatformArg || hasChannelArg) {
-			if (!hasPlatformArg || !hasChannelArg) {
-				await context.reply(usage);
-				return;
-			}
+		if (hasPlatformArg && hasChannelArg) {
 			platform = normalizePlatform(platformRaw);
+			channelId = normalizeRequiredId(channelRaw);
+		} else if (hasPlatformArg) {
+			const requestedPlatform = normalizePlatform(platformRaw);
+			if (requestedPlatform) {
+				platform = requestedPlatform;
+				if (platform !== context.platform) {
+					await context.reply(
+						`Provide a channel ID when setting the ${formatPlatformLabel(platform)} announcement channel from ${formatPlatformLabel(context.platform)}.`,
+					);
+					return;
+				}
+			} else {
+				channelId = normalizeRequiredId(platformRaw);
+			}
+		} else if (hasChannelArg) {
 			channelId = normalizeRequiredId(channelRaw);
 		}
 
@@ -1176,6 +1187,8 @@ export class LinkService {
 					announcementChannelsUpdatedByPlatform: context.platform,
 					announcementChannelsUpdatedByUserId:
 						normalizeRequiredId(context.userId) ?? null,
+					announcementChannelsUpdatedReason:
+						"manual_set_announcement_channel",
 				},
 			},
 		);
