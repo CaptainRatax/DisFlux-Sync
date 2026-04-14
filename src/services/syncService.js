@@ -6,285 +6,31 @@
 import { logger } from "../core/logger.js";
 import { OperationGuard } from "../core/operationGuard.js";
 import { isLinkEnabled } from "./linkLifecycleService.js";
-import { sanitizeMongoObjectId } from "../utils/sanitize.js";
-
-function getOppositePlatform(platform) {
-	if (platform === "discord") {
-		return "fluxer";
-	}
-
-	if (platform === "fluxer") {
-		return "discord";
-	}
-
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-
-function getGuildIdForPlatform(serverLink, platform) {
-	return platform === "discord"
-		? serverLink.discordGuildId
-		: serverLink.fluxerGuildId;
-}
-
-function getChannelIdForPlatform(channelLink, platform) {
-	return platform === "discord"
-		? channelLink.discordChannelId
-		: channelLink.fluxerChannelId;
-}
-
-function getRoleIdForPlatform(roleLink, platform) {
-	return platform === "discord"
-		? roleLink.discordRoleId
-		: roleLink.fluxerRoleId;
-}
-
-function getUserIdForPlatform(userLink, platform) {
-	return platform === "discord"
-		? userLink.discordUserId
-		: userLink.fluxerUserId;
-}
-
-function getChannelFieldForPlatform(platform) {
-	return platform === "discord" ? "discordChannelId" : "fluxerChannelId";
-}
-
-function isSupportedPlatform(platform) {
-	return platform === "discord" || platform === "fluxer";
-}
-
-function normalizeNullableString(value) {
-	if (value === null || value === undefined) {
-		return null;
-	}
-
-	return String(value);
-}
-
-function normalizeRoleTemplate(template) {
-	return {
-		name: String(template?.name ?? ""),
-		color: Number(template?.color ?? 0),
-		permissions: String(template?.permissions ?? "0"),
-		hoist: Boolean(template?.hoist),
-		mentionable: Boolean(template?.mentionable),
-	};
-}
-
-function roleTemplatesEqual(left, right) {
-	const a = normalizeRoleTemplate(left);
-	const b = normalizeRoleTemplate(right);
-
-	return (
-		a.name === b.name &&
-		a.color === b.color &&
-		a.permissions === b.permissions &&
-		a.hoist === b.hoist &&
-		a.mentionable === b.mentionable
-	);
-}
-
-function normalizeOverwriteType(type) {
-	if (type === "role" || type === 0 || type === "0") {
-		return "role";
-	}
-
-	if (type === "member" || type === 1 || type === "1") {
-		return "member";
-	}
-
-	return null;
-}
-
-function normalizePermissionOverwrite(overwrite) {
-	const id = overwrite?.id ? String(overwrite.id) : null;
-	const type = normalizeOverwriteType(overwrite?.type);
-
-	if (!id || !type) {
-		return null;
-	}
-
-	return {
-		id,
-		type,
-		allow: String(overwrite?.allow ?? "0"),
-		deny: String(overwrite?.deny ?? "0"),
-	};
-}
-
-function normalizePermissionOverwrites(overwrites = []) {
-	const byKey = new Map();
-
-	for (const rawOverwrite of overwrites ?? []) {
-		const overwrite = normalizePermissionOverwrite(rawOverwrite);
-		if (!overwrite) {
-			continue;
-		}
-
-		byKey.set(`${overwrite.type}:${overwrite.id}`, overwrite);
-	}
-
-	return [...byKey.values()].sort((left, right) => {
-		if (left.type !== right.type) {
-			return left.type.localeCompare(right.type);
-		}
-
-		return left.id.localeCompare(right.id);
-	});
-}
-
-function normalizeChannelTemplate(template) {
-	const kind = String(template?.kind ?? "unknown");
-	const normalized = {
-		kind,
-		name: String(template?.name ?? ""),
-		parentId: normalizeNullableString(template?.parentId),
-		permissionOverwrites: normalizePermissionOverwrites(
-			template?.permissionOverwrites,
-		),
-	};
-
-	if (kind === "text") {
-		normalized.topic = normalizeNullableString(template?.topic);
-		normalized.nsfw = Boolean(template?.nsfw);
-		normalized.rateLimitPerUser = Number(
-			template?.rateLimitPerUser ?? 0,
-		);
-	}
-
-	if (kind === "voice") {
-		normalized.bitrate =
-			template?.bitrate === null || template?.bitrate === undefined
-				? null
-				: Number(template.bitrate);
-		normalized.userLimit = Number(template?.userLimit ?? 0);
-	}
-
-	return normalized;
-}
-
-function channelTemplatesEqual(left, right) {
-	return (
-		JSON.stringify(normalizeChannelTemplate(left)) ===
-		JSON.stringify(normalizeChannelTemplate(right))
-	);
-}
-
-function normalizeNick(value) {
-	if (value === null || value === undefined) {
-		return null;
-	}
-
-	return String(value);
-}
-
-function normalizeMemberSnapshot(snapshot) {
-	if (
-		!snapshot ||
-		!snapshot.roleIds ||
-		typeof snapshot.roleIds[Symbol.iterator] !== "function"
-	) {
-		return null;
-	}
-
-	return {
-		userId: snapshot.userId ?? null,
-		nick: snapshot.nick ?? null,
-		roleIds: new Set(snapshot.roleIds ?? []),
-	};
-}
-
-function getServerLinkIdValues(serverLinkId) {
-	const values = [];
-	const objectId = sanitizeMongoObjectId(serverLinkId);
-
-	if (objectId) {
-		values.push(objectId);
-	}
-
-	if (serverLinkId !== null && serverLinkId !== undefined) {
-		const stringId = String(serverLinkId);
-		if (stringId) {
-			values.push(stringId);
-		}
-	}
-
-	return values;
-}
-
-function getServerLinkIdFilter(serverLinkId) {
-	const values = getServerLinkIdValues(serverLinkId);
-
-	if (values.length === 1) {
-		return values[0];
-	}
-
-	return { $in: values };
-}
-
-function createRoleMembershipSummary() {
-	return {
-		checked: 0,
-		differences: 0,
-		changed: 0,
-		skippedUnmanageableRoles: 0,
-		failed: 0,
-	};
-}
-
-function createRoleMetadataSyncResult() {
-	return {
-		differences: 0,
-		changed: 0,
-		skippedDisabled: 0,
-		skippedUnsupported: 0,
-		skippedMissingSource: 0,
-		skippedMissingTarget: 0,
-		skippedUnmanageable: 0,
-		failed: 0,
-	};
-}
-
-function createRoleMetadataSummary() {
-	return {
-		checked: 0,
-		...createRoleMetadataSyncResult(),
-	};
-}
-
-function createChannelMetadataSyncResult() {
-	return {
-		differences: 0,
-		changed: 0,
-		skippedDisabled: 0,
-		skippedUnsupported: 0,
-		skippedMissingIds: 0,
-		skippedMissingSource: 0,
-		skippedMissingTarget: 0,
-		skippedTypeMismatch: 0,
-		skippedUnmanageable: 0,
-		failed: 0,
-	};
-}
-
-function createChannelMetadataSummary() {
-	return {
-		checked: 0,
-		roleLinksUsed: 0,
-		...createChannelMetadataSyncResult(),
-	};
-}
-
-function addSyncResult(summary, result) {
-	if (!result) {
-		return;
-	}
-
-	for (const [key, value] of Object.entries(result)) {
-		if (typeof summary[key] === "number") {
-			summary[key] += Number(value) || 0;
-		}
-	}
-}
+import {
+	getChannelFieldForPlatform,
+	getChannelIdForPlatform,
+	getGuildIdForPlatform,
+	getOppositePlatform,
+	getRoleIdForPlatform,
+	getUserIdForPlatform,
+	isSupportedPlatform,
+} from "./sync/platforms.js";
+import { getServerLinkIdFilter } from "./sync/state.js";
+import {
+	addSyncResult,
+	createChannelMetadataSyncResult,
+	createChannelMetadataSummary,
+	createRoleMembershipSummary,
+	createRoleMetadataSyncResult,
+	createRoleMetadataSummary,
+} from "./sync/summaries.js";
+import {
+	channelTemplatesEqual,
+	normalizeMemberSnapshot,
+	normalizeNick,
+	normalizePermissionOverwrites,
+	roleTemplatesEqual,
+} from "./sync/templates.js";
 
 export class SyncService {
 	constructor({ mongo, platforms, lifecycleService = null }) {

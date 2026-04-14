@@ -12,224 +12,30 @@ import {
 	sanitizeMongoObjectId,
 	sanitizePlatformId,
 } from "../utils/sanitize.js";
-
-function getOppositePlatform(platform) {
-	if (platform === "discord") {
-		return "fluxer";
-	}
-	if (platform === "fluxer") {
-		return "discord";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-function getGuildIdForPlatform(serverLink, platform) {
-	return platform === "discord"
-		? serverLink.discordGuildId
-		: serverLink.fluxerGuildId;
-}
-function getChannelIdForPlatform(channelLink, platform) {
-	return platform === "discord"
-		? channelLink.discordChannelId
-		: channelLink.fluxerChannelId;
-}
-function getChannelIdFromMessageLink(messageLink, platform) {
-	return platform === "discord"
-		? messageLink.discordChannelId
-		: messageLink.fluxerChannelId;
-}
-function getWebhookIdFieldName(platform) {
-	return platform === "discord" ? "discordWebhookId" : "fluxerWebhookId";
-}
-function getWebhookTokenFieldName(platform) {
-	return platform === "discord"
-		? "discordWebhookToken"
-		: "fluxerWebhookToken";
-}
-function getWebhookCredentials(channelLink, platform) {
-	const webhookId = channelLink?.[getWebhookIdFieldName(platform)];
-	const webhookToken = channelLink?.[getWebhookTokenFieldName(platform)];
-	if (!webhookId || !webhookToken) {
-		return null;
-	}
-	return {
-		id: String(webhookId),
-		token: String(webhookToken),
-	};
-}
-function isManagedWebhookMessage(channelLink, event) {
-	if (!event.isWebhookMessage || !event.webhookId) {
-		return false;
-	}
-	const webhookId = channelLink?.[getWebhookIdFieldName(event.platform)];
-	return Boolean(webhookId && String(webhookId) === String(event.webhookId));
-}
-function getMessageIdForPlatform(messageLink, platform) {
-	return platform === "discord"
-		? messageLink.discordMessageId
-		: messageLink.fluxerMessageId;
-}
-function escapeMarkdown(value) {
-	return String(value ?? "").replace(/([\\`*_{}[\]()#+.!|>~-])/g, "\\$1");
-}
-function unique(values) {
-	return [...new Set(values.filter(Boolean))];
-}
-function truncate(value, maxLength) {
-	const text = String(value ?? "").trim();
-	if (text.length <= maxLength) {
-		return text;
-	}
-	return text.slice(0, maxLength);
-}
-function getWebhookUsername(displayName) {
-	const username = truncate(displayName, 80);
-	return username || "Unknown User";
-}
-function getWebhookAvatarUrl(avatarUrl) {
-	const normalized = String(avatarUrl ?? "").trim();
-	if (!normalized) {
-		return null;
-	}
-	try {
-		const url = new URL(normalized);
-		if (url.protocol !== "http:" && url.protocol !== "https:") {
-			return null;
-		}
-		return url.toString();
-	} catch {
-		return null;
-	}
-}
-function extractIds(regex, text) {
-	const ids = new Set();
-	for (const match of String(text ?? "").matchAll(regex)) {
-		if (match[1]) {
-			ids.add(match[1]);
-		}
-	}
-	return [...ids];
-}
-function buildDiscordAllowedMentions({ userIds, roleIds, mentionEveryone }) {
-	return {
-		repliedUser: false,
-		parse: mentionEveryone ? ["everyone"] : [],
-		users: unique(userIds),
-		roles: unique(roleIds),
-	};
-}
-function buildFluxerAllowedMentions({ userIds, roleIds, mentionEveryone }) {
-	const uniqueUserIds = unique(userIds);
-	const uniqueRoleIds = unique(roleIds);
-	if (
-		mentionEveryone &&
-		uniqueUserIds.length === 0 &&
-		uniqueRoleIds.length === 0
-	) {
-		return { replied_user: false, parse: ["everyone"] };
-	}
-	return {
-		replied_user: false,
-		...(uniqueUserIds.length > 0 ? { users: uniqueUserIds } : {}),
-		...(uniqueRoleIds.length > 0 ? { roles: uniqueRoleIds } : {}),
-	};
-}
-function normalizeEmbedField(field) {
-	if (!field?.name && !field?.value) {
-		return null;
-	}
-	return {
-		name: String(field.name ?? ""),
-		value: String(field.value ?? ""),
-		inline: Boolean(field.inline),
-	};
-}
-function normalizeEmbedAuthor(author) {
-	if (!author?.name) {
-		return null;
-	}
-	return {
-		name: String(author.name),
-		...(author.url ? { url: author.url } : {}),
-		...(author.icon_url ? { icon_url: author.icon_url } : {}),
-		...(author.iconURL ? { icon_url: author.iconURL } : {}),
-	};
-}
-function normalizeEmbedFooter(footer) {
-	if (!footer?.text) {
-		return null;
-	}
-	return {
-		text: String(footer.text),
-		...(footer.icon_url ? { icon_url: footer.icon_url } : {}),
-		...(footer.iconURL ? { icon_url: footer.iconURL } : {}),
-	};
-}
-function normalizeEmbedMedia(media) {
-	if (!media?.url) {
-		return null;
-	}
-	return { url: media.url };
-}
-function normalizeEmbedsForBridge(embeds = []) {
-	const result = [];
-	for (const embed of embeds) {
-		const normalized = {
-			...(embed.title ? { title: String(embed.title) } : {}),
-			...(embed.description
-				? { description: String(embed.description) }
-				: {}),
-			...(embed.url ? { url: embed.url } : {}),
-			...(typeof embed.color === "number" ? { color: embed.color } : {}),
-			...(embed.timestamp ? { timestamp: embed.timestamp } : {}),
-		};
-		const author = normalizeEmbedAuthor(embed.author);
-		if (author) {
-			normalized.author = author;
-		}
-		const footer = normalizeEmbedFooter(embed.footer);
-		if (footer) {
-			normalized.footer = footer;
-		}
-		const image = normalizeEmbedMedia(embed.image);
-		if (image) {
-			normalized.image = image;
-		}
-		const thumbnail = normalizeEmbedMedia(embed.thumbnail);
-		if (thumbnail) {
-			normalized.thumbnail = thumbnail;
-		}
-		const fields = (embed.fields ?? [])
-			.map(normalizeEmbedField)
-			.filter(Boolean);
-		if (fields.length > 0) {
-			normalized.fields = fields;
-		}
-		if (Object.keys(normalized).length > 0) {
-			result.push(normalized);
-		}
-	}
-	return result.slice(0, 10);
-}
-async function downloadRemoteFile(file) {
-	if (!file?.url) {
-		return null;
-	}
-	const response = await fetch(file.url);
-	if (!response.ok) {
-		return null;
-	}
-	const arrayBuffer = await response.arrayBuffer();
-	return {
-		name: file.filename ?? "file",
-		description: file.description ?? null,
-		contentType:
-			file.contentType ??
-			response.headers.get("content-type") ??
-			"application/octet-stream",
-		buffer: Buffer.from(arrayBuffer),
-		originalUrl: file.url,
-	};
-}
+import { downloadRemoteFile } from "./messageBridge/attachments.js";
+import { normalizeEmbedsForBridge } from "./messageBridge/embeds.js";
+import {
+	escapeMarkdown,
+	getWebhookAvatarUrl,
+	getWebhookUsername,
+} from "./messageBridge/identity.js";
+import {
+	buildDiscordAllowedMentions,
+	buildFluxerAllowedMentions,
+	extractIds,
+	unique,
+} from "./messageBridge/mentions.js";
+import {
+	getChannelIdForPlatform,
+	getChannelIdFromMessageLink,
+	getGuildIdForPlatform,
+	getMessageIdForPlatform,
+	getOppositePlatform,
+	getWebhookCredentials,
+	getWebhookIdFieldName,
+	getWebhookTokenFieldName,
+	isManagedWebhookMessage,
+} from "./messageBridge/platform.js";
 export class MessageBridgeService {
 	constructor({ mongo, platforms }) {
 		this.serverLinks = mongo.collection("server_links");

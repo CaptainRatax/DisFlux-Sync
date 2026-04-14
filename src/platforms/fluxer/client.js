@@ -8,267 +8,37 @@ import { Client, GatewayDispatchEvents } from "@discordjs/core";
 import { REST } from "@discordjs/rest";
 import { WebSocketManager } from "@discordjs/ws";
 import { logger } from "../../core/logger.js";
-const FLUXER_API_ORIGIN = "https://api.fluxer.app";
-const FLUXER_CDN_ORIGIN = "https://fluxerusercontent.com";
-const ALLOWED_FLUXER_API_ORIGINS = new Set([FLUXER_API_ORIGIN]);
-const FLUXER_ADMINISTRATOR_PERMISSION = 0x8n;
-const FLUXER_MANAGE_CHANNELS_PERMISSION = 0x10n;
-const FLUXER_MANAGE_ROLES_PERMISSION = 0x10000000n;
+import {
+	buildFluxerApiUrl,
+	parseFluxerApiConfig,
+} from "./apiConfig.js";
+import {
+	buildMemberSnapshot,
+	extractMemberRoleIds,
+	extractMemberUserId,
+	getMessageAvatarUrl,
+	getUserDisplayName,
+} from "./identity.js";
+import {
+	buildFluxerMessageBody,
+	buildFluxerMessageForm,
+	getEditMessageContent,
+	getUnicodeEmojiFromFluxerPayload,
+	getWebhookCredentials,
+	normalizeFluxerAttachments,
+	normalizeReplyPayload,
+} from "./messages.js";
+import {
+	FLUXER_ADMINISTRATOR_PERMISSION,
+	FLUXER_MANAGE_CHANNELS_PERMISSION,
+	FLUXER_MANAGE_ROLES_PERMISSION,
+	buildChannelPermissionOverwrites,
+	buildFluxerPermissionOverwrites,
+	hasPermission,
+	setDefined,
+} from "./permissions.js";
 const BRIDGE_WEBHOOK_NAME = "DisFlux Sync Bridge";
 
-function hasPermission(permissions, permission) {
-	return (permissions & permission) === permission;
-}
-
-function parseFluxerApiConfig(rawBase) {
-	const url = new URL(rawBase);
-	if (!ALLOWED_FLUXER_API_ORIGINS.has(url.origin)) {
-		throw new Error(`Unsupported Fluxer API origin: ${url.origin}`);
-	}
-	const segments = url.pathname.split("/").filter(Boolean);
-	let version = "1";
-	if (segments.length > 0) {
-		const lastSegment = segments[segments.length - 1];
-		if (/^v\d+$/i.test(lastSegment)) {
-			version = lastSegment.slice(1);
-			segments.pop();
-		}
-	}
-	const apiBase =
-		segments.length > 0
-			? `${url.origin}/${segments.join("/")}`
-			: url.origin;
-	return { apiBase, version };
-}
-function buildFluxerApiUrl(apiBase, apiVersion, path) {
-	if (
-		typeof path !== "string" ||
-		!path.startsWith("/") ||
-		path.startsWith("//") ||
-		path.includes("\\")
-	) {
-		throw new Error("Fluxer API path must be a relative absolute path");
-	}
-
-	const normalizedApiBase = apiBase.endsWith("/") ? apiBase : `${apiBase}/`;
-	const url = new URL(`v${apiVersion}${path}`, normalizedApiBase);
-	if (!ALLOWED_FLUXER_API_ORIGINS.has(url.origin)) {
-		throw new Error(`Unsupported Fluxer API request origin: ${url.origin}`);
-	}
-
-	return `${FLUXER_API_ORIGIN}${url.pathname}${url.search}`;
-}
-function extractMemberRoleIds(member) {
-	return member?.roles ?? member?.role_ids ?? [];
-}
-function extractMemberUserId(member) {
-	return member?.user?.id ?? member?.user_id ?? member?.id ?? null;
-}
-function getUserDisplayName(author, member = null) {
-	return (
-		member?.nick ??
-		author?.global_name ??
-		author?.username ??
-		"Unknown User"
-	);
-}
-function getAvatarFilename(avatar) {
-	const normalized = String(avatar ?? "").trim();
-	if (!normalized) {
-		return null;
-	}
-	if (normalized.includes(".")) {
-		return normalized;
-	}
-	return `${normalized}.${normalized.startsWith("a_") ? "gif" : "png"}`;
-}
-function getFluxerAvatarUrl(entity) {
-	if (entity?.avatar_url) {
-		return entity.avatar_url;
-	}
-	const filename = getAvatarFilename(entity?.avatar);
-	if (!entity?.id || !filename) {
-		return null;
-	}
-	const encodedId = encodeURIComponent(entity.id);
-	const encodedFilename = encodeURIComponent(filename);
-	return `${FLUXER_CDN_ORIGIN}/avatars/${encodedId}/${encodedFilename}?size=128`;
-}
-function getMessageAvatarUrl(data) {
-	return (
-		data.member?.avatar_url ??
-		getFluxerAvatarUrl(data.member?.user) ??
-		getFluxerAvatarUrl(data.author) ??
-		null
-	);
-}
-function getUnicodeEmojiFromFluxerPayload(emoji) {
-	if (!emoji) {
-		return null;
-	}
-	if (emoji.id) {
-		return null;
-	}
-	return emoji.name ?? null;
-}
-function normalizeFluxerAttachments(attachments = []) {
-	return attachments.map((attachment) => ({
-		url: attachment.url,
-		filename: attachment.filename ?? "file",
-		contentType: attachment.content_type ?? "application/octet-stream",
-		description: attachment.description ?? null,
-		size: attachment.size ?? 0,
-	}));
-}
-function normalizeReplyPayload(payload) {
-	if (typeof payload === "string") {
-		return { content: payload };
-	}
-	return payload ?? {};
-}
-function getReplyFallbackLine(payload) {
-	if (!payload.messageReference?.messageId) {
-		return null;
-	}
-	return `Replying to bridged message: ${payload.messageReference.messageId}`;
-}
-function getMessageContent(
-	payload,
-	{ useFallbackContent = false, includeReferenceFallback = false } = {},
-) {
-	const content = useFallbackContent
-		? payload.fallbackContent ?? payload.content ?? ""
-		: payload.content ?? "";
-	const replyFallback = includeReferenceFallback
-		? getReplyFallbackLine(payload)
-		: null;
-	if (!replyFallback) {
-		return content;
-	}
-	if (!String(content).trim()) {
-		return replyFallback;
-	}
-	return [replyFallback, content].join("\n");
-}
-function getEditMessageContent(payload, useFallbackContent = false) {
-	if (useFallbackContent) {
-		return payload.fallbackContent ?? payload.content ?? "";
-	}
-	return payload.content ?? "";
-}
-function buildFluxerMessageBody(
-	payload,
-	{
-		useFallbackContent = false,
-		includeReference = true,
-		includeReferenceFallback = false,
-		includeWebhookIdentity = false,
-	} = {},
-) {
-	const body = {
-		content: getMessageContent(payload, {
-			useFallbackContent,
-			includeReferenceFallback,
-		}),
-		...(payload.allowedMentions
-			? { allowed_mentions: payload.allowedMentions }
-			: {}),
-		...(payload.embeds?.length ? { embeds: payload.embeds } : {}),
-	};
-
-	if (includeReference && payload.messageReference?.messageId) {
-		body.message_reference = {
-			type: 0,
-			message_id: payload.messageReference.messageId,
-			channel_id: payload.messageReference.channelId,
-			guild_id: payload.messageReference.guildId ?? undefined,
-		};
-	}
-
-	if (includeWebhookIdentity) {
-		if (payload.webhookIdentity?.username) {
-			body.username = payload.webhookIdentity.username;
-		}
-		if (payload.webhookIdentity?.avatarUrl) {
-			body.avatar_url = payload.webhookIdentity.avatarUrl;
-		}
-	}
-
-	return body;
-}
-function buildFluxerMessageForm(payload, body) {
-	const form = new FormData();
-	form.append(
-		"payload_json",
-		JSON.stringify({
-			...body,
-			attachments: payload.files.map((file, index) => ({
-				id: index,
-				filename: file.name,
-				...(file.description
-					? { description: file.description }
-					: {}),
-			})),
-		}),
-	);
-	for (const [index, file] of payload.files.entries()) {
-		form.append(
-			`files[${index}]`,
-			new Blob([file.buffer], {
-				type: file.contentType ?? "application/octet-stream",
-			}),
-			file.name,
-		);
-	}
-	return form;
-}
-function getWebhookCredentials(webhook) {
-	if (!webhook?.id || !webhook?.token) {
-		return null;
-	}
-	return {
-		id: String(webhook.id),
-		token: String(webhook.token),
-	};
-}
-function buildMemberSnapshot(member) {
-	return {
-		userId: extractMemberUserId(member),
-		nick: member?.nick ?? null,
-		roleIds: new Set(extractMemberRoleIds(member)),
-	};
-}
-function normalizePermissionOverwriteType(type) {
-	if (type === "member" || type === 1 || type === "1") {
-		return { api: 1, normalized: "member" };
-	}
-
-	return { api: 0, normalized: "role" };
-}
-function buildChannelPermissionOverwrites(channel) {
-	return (channel.permission_overwrites ?? []).map((overwrite) => {
-		const type = normalizePermissionOverwriteType(overwrite.type);
-		return {
-			id: overwrite.id,
-			type: type.normalized,
-			allow: String(overwrite.allow ?? "0"),
-			deny: String(overwrite.deny ?? "0"),
-		};
-	});
-}
-function buildFluxerPermissionOverwrites(overwrites = []) {
-	return overwrites.map((overwrite) => ({
-		id: overwrite.id,
-		type: normalizePermissionOverwriteType(overwrite.type).api,
-		allow: String(overwrite.allow ?? "0"),
-		deny: String(overwrite.deny ?? "0"),
-	}));
-}
-function setDefined(target, key, value) {
-	if (value !== undefined) {
-		target[key] = value;
-	}
-}
 export class FluxerPlatform extends EventEmitter {
 	constructor({ token, apiBase }) {
 		super();

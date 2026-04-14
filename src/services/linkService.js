@@ -3,8 +3,6 @@
 // Licensed under the GNU Affero General Public License v3.0 or later
 // See the LICENSE file for details.
 
-import { createHash } from "node:crypto";
-
 import { isLinkEnabled } from "./linkLifecycleService.js";
 import {
 	generateSetupCode,
@@ -12,224 +10,34 @@ import {
 } from "../utils/setupCode.js";
 import {
 	sanitizeMongoObjectId,
-	sanitizePlatformId,
 	sanitizeSetupCode,
 } from "../utils/sanitize.js";
 import { formatInlineCode } from "../utils/prefix.js";
-function normalizeId(value) {
-	if (typeof value !== "string" && typeof value !== "number") {
-		return null;
-	}
-
-	const normalized = String(value).trim();
-	if (["auto", "null", "none", "-"].includes(normalized.toLowerCase())) {
-		return null;
-	}
-
-	return sanitizePlatformId(normalized);
-}
-function normalizeRequiredId(value) {
-	return sanitizePlatformId(value);
-}
-function normalizePriority(value) {
-	return normalizePlatform(value);
-}
-function normalizePlatform(value) {
-	const normalized = String(value ?? "")
-		.trim()
-		.toLowerCase();
-	if (normalized === "discord" || normalized === "fluxer") {
-		return normalized;
-	}
-	return null;
-}
-function normalizeBooleanOption(value) {
-	const normalized = String(value ?? "")
-		.trim()
-		.toLowerCase();
-	if (["yes", "true", "1", "on"].includes(normalized)) {
-		return true;
-	}
-	if (["no", "false", "0", "off"].includes(normalized)) {
-		return false;
-	}
-	return null;
-}
-function hashSetupCode(code) {
-	return createHash("sha256").update(String(code), "utf8").digest("hex");
-}
-function getGuildFieldName(platform) {
-	if (platform === "discord") {
-		return "discordGuildId";
-	}
-	if (platform === "fluxer") {
-		return "fluxerGuildId";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-function getOtherPlatform(platform) {
-	if (platform === "discord") {
-		return "fluxer";
-	}
-	if (platform === "fluxer") {
-		return "discord";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-function getGuildIdForPlatform(serverLink, platform) {
-	if (platform === "discord") {
-		return serverLink.discordGuildId;
-	}
-	if (platform === "fluxer") {
-		return serverLink.fluxerGuildId;
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-function getChannelFieldName(platform) {
-	if (platform === "discord") {
-		return "discordChannelId";
-	}
-	if (platform === "fluxer") {
-		return "fluxerChannelId";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-function getAnnouncementChannelFieldName(platform) {
-	if (platform === "discord") {
-		return "discordAnnouncementChannelId";
-	}
-	if (platform === "fluxer") {
-		return "fluxerAnnouncementChannelId";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-function getRoleFieldName(platform) {
-	if (platform === "discord") {
-		return "discordRoleId";
-	}
-	if (platform === "fluxer") {
-		return "fluxerRoleId";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-function getUserFieldName(platform) {
-	if (platform === "discord") {
-		return "discordUserId";
-	}
-	if (platform === "fluxer") {
-		return "fluxerUserId";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-function formatPlatformLabel(platform) {
-	if (platform === "discord") {
-		return "Discord";
-	}
-	if (platform === "fluxer") {
-		return "Fluxer";
-	}
-	return "Unknown";
-}
-function formatChannelTypeLabel(kind) {
-	if (kind === "text") {
-		return "text";
-	}
-	if (kind === "voice") {
-		return "voice";
-	}
-	if (kind === "category") {
-		return "category";
-	}
-	return "unknown";
-}
-function getServerLinkIdQuery(serverLinkId) {
-	const values = [];
-	function addValue(value) {
-		if (value === null || value === undefined) {
-			return;
-		}
-		if (
-			values.some(function valueMatches(existing) {
-				return (
-					typeof existing === typeof value &&
-					String(existing) === String(value)
-				);
-			})
-		) {
-			return;
-		}
-		values.push(value);
-	}
-
-	addValue(sanitizeMongoObjectId(serverLinkId));
-
-	if (serverLinkId !== null && serverLinkId !== undefined) {
-		addValue(serverLinkId);
-		addValue(String(serverLinkId));
-	}
-
-	if (values.length === 1) {
-		return { $eq: values[0] };
-	}
-
-	return { $in: values };
-}
-function formatUserSyncResultLines(syncResult) {
-	if (!syncResult) {
-		return [];
-	}
-
-	const membershipSummary = syncResult.membershipSummary ?? {};
-
-	return [
-		...(syncResult.skippedFluxerOwner
-			? ["Sync skipped: `Fluxer owner cannot be synchronized`"]
-			: []),
-		...(syncResult.skippedDisabledServer
-			? ["Sync skipped: `server link is disabled`"]
-			: []),
-		...(syncResult.skippedDisabledUser
-			? ["Sync skipped: `user link is disabled`"]
-			: []),
-		`Member snapshots fetched: \`${!syncResult.skipped}\``,
-		`Linked roles checked: \`${syncResult.roleLinkCount}\``,
-		`Role membership differences: \`${membershipSummary.differences ?? 0}\``,
-		`Role membership changes applied: \`${membershipSummary.changed ?? 0}\``,
-		`Role membership changes failed: \`${membershipSummary.failed ?? 0}\``,
-		`Role permission skips: \`${membershipSummary.skippedUnmanageableRoles ?? 0}\``,
-	];
-}
-
-function formatRoleMetadataSummaryLines(summary) {
-	return [
-		`Roles checked: \`${summary?.checked ?? 0}\``,
-		`Role metadata differences: \`${summary?.differences ?? 0}\``,
-		`Role metadata changes applied: \`${summary?.changed ?? 0}\``,
-		`Role metadata changes failed: \`${summary?.failed ?? 0}\``,
-		`Disabled server skips: \`${summary?.skippedDisabled ?? 0}\``,
-		`Unsupported priorities skipped: \`${summary?.skippedUnsupported ?? 0}\``,
-		`Missing source roles skipped: \`${summary?.skippedMissingSource ?? 0}\``,
-		`Missing target roles skipped: \`${summary?.skippedMissingTarget ?? 0}\``,
-		`Unmanageable target roles skipped: \`${summary?.skippedUnmanageable ?? 0}\``,
-	];
-}
-
-function formatChannelMetadataSummaryLines(summary) {
-	return [
-		`Channels checked: \`${summary?.checked ?? 0}\``,
-		`Linked roles used for permission mapping: \`${summary?.roleLinksUsed ?? 0}\``,
-		`Channel data or permission differences: \`${summary?.differences ?? 0}\``,
-		`Channel changes applied: \`${summary?.changed ?? 0}\``,
-		`Channel changes failed: \`${summary?.failed ?? 0}\``,
-		`Disabled server skips: \`${summary?.skippedDisabled ?? 0}\``,
-		`Unsupported priorities skipped: \`${summary?.skippedUnsupported ?? 0}\``,
-		`Missing channel IDs skipped: \`${summary?.skippedMissingIds ?? 0}\``,
-		`Missing source channels skipped: \`${summary?.skippedMissingSource ?? 0}\``,
-		`Missing target channels skipped: \`${summary?.skippedMissingTarget ?? 0}\``,
-		`Type mismatches skipped: \`${summary?.skippedTypeMismatch ?? 0}\``,
-		`Unmanageable target channels skipped: \`${summary?.skippedUnmanageable ?? 0}\``,
-	];
-}
+import {
+	getServerLinkIdQuery,
+	hashSetupCode,
+	normalizeBooleanOption,
+	normalizeId,
+	normalizePriority,
+	normalizeRequiredId,
+} from "./link/normalizers.js";
+import {
+	formatChannelTypeLabel,
+	formatPlatformLabel,
+	getAnnouncementChannelFieldName,
+	getChannelFieldName,
+	getGuildFieldName,
+	getGuildIdForPlatform,
+	getOtherPlatform,
+	getRoleFieldName,
+	getUserFieldName,
+	normalizePlatform,
+} from "./link/platformFields.js";
+import {
+	formatChannelMetadataSummaryLines,
+	formatRoleMetadataSummaryLines,
+	formatUserSyncResultLines,
+} from "./link/summaries.js";
 
 export class LinkService {
 	constructor({
