@@ -211,6 +211,9 @@ export class MessageBridgeService {
 				sourcePlatform,
 				sourceMessageId,
 				targetMessageId: sentMessage.id,
+				targetReferenceFallbackUsed: Boolean(
+					sentMessage.referenceFallbackUsed,
+				),
 			});
 		} catch (error) {
 			logger.error("Message create bridge failed", {
@@ -264,10 +267,17 @@ export class MessageBridgeService {
 			}
 			const channelLink =
 				await this.findChannelLinkForMessageLink(messageLink);
+			const editPayload = {
+				...transformed,
+				referenceFallbackUsed: this.getReferenceFallbackUsed(
+					messageLink,
+					targetPlatform,
+				),
+			};
 			const outgoing = this.attachExistingWebhook(
 				channelLink,
 				targetPlatform,
-				transformed,
+				editPayload,
 			);
 			const edited = await this.platforms[
 				targetPlatform
@@ -870,6 +880,7 @@ export class MessageBridgeService {
 		sourcePlatform,
 		sourceMessageId,
 		targetMessageId,
+		targetReferenceFallbackUsed = false,
 	}) {
 		const sanitizedServerLinkId = sanitizeMongoObjectId(serverLinkId);
 		const sanitizedDiscordChannelId =
@@ -909,6 +920,13 @@ export class MessageBridgeService {
 			document.fluxerMessageId = sanitizedSourceMessageId;
 			document.discordMessageId = sanitizedTargetMessageId;
 		}
+		if (targetReferenceFallbackUsed) {
+			const fallbackField =
+				sourcePlatform === "discord"
+					? "fluxerReferenceFallbackUsed"
+					: "discordReferenceFallbackUsed";
+			document[fallbackField] = true;
+		}
 		try {
 			await this.messageLinks.insertOne(document);
 		} catch (error) {
@@ -920,5 +938,12 @@ export class MessageBridgeService {
 				error: error.message,
 			});
 		}
+	}
+	getReferenceFallbackUsed(messageLink, platform) {
+		const fallbackField =
+			platform === "discord"
+				? "discordReferenceFallbackUsed"
+				: "fluxerReferenceFallbackUsed";
+		return Boolean(messageLink?.[fallbackField]);
 	}
 }

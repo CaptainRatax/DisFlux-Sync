@@ -718,7 +718,18 @@ export class FluxerPlatform extends EventEmitter {
 			includeReferenceFallback: true,
 			includeWebhookIdentity: true,
 		});
-		return this.executeGuildWebhookMessage(payload, fallbackBody);
+		const sentWithReferenceFallback =
+			await this.executeGuildWebhookMessage(payload, fallbackBody);
+		if (
+			sentWithReferenceFallback &&
+			typeof sentWithReferenceFallback === "object"
+		) {
+			return {
+				...sentWithReferenceFallback,
+				referenceFallbackUsed: true,
+			};
+		}
+		return sentWithReferenceFallback;
 	}
 	async executeGuildWebhookMessage(payload, body) {
 		const path = `/webhooks/${payload.webhook.id}/${payload.webhook.token}?wait=true`;
@@ -763,6 +774,9 @@ export class FluxerPlatform extends EventEmitter {
 					body: JSON.stringify(
 						buildFluxerMessageBody(payload, {
 							includeReference: false,
+							includeReferenceFallback: Boolean(
+								payload.referenceFallbackUsed,
+							),
 						}),
 					),
 				},

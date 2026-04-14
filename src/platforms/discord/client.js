@@ -818,7 +818,7 @@ export class DiscordPlatform extends EventEmitter {
 					includeWebhookIdentity: true,
 				}),
 			);
-			return sent?.id ? { ...sent, id: sent.id } : null;
+			return sent?.id ? sent : null;
 		} catch {
 			return null;
 		}
