@@ -8,130 +8,37 @@ import { Client, GatewayDispatchEvents } from "@discordjs/core";
 import { REST } from "@discordjs/rest";
 import { WebSocketManager } from "@discordjs/ws";
 import { logger } from "../../core/logger.js";
-const FLUXER_API_ORIGIN = "https://api.fluxer.app";
-const ALLOWED_FLUXER_API_ORIGINS = new Set([FLUXER_API_ORIGIN]);
-const FLUXER_ADMINISTRATOR_PERMISSION = 0x8n;
-const FLUXER_MANAGE_CHANNELS_PERMISSION = 0x10n;
-const FLUXER_MANAGE_ROLES_PERMISSION = 0x10000000n;
+import {
+	buildFluxerApiUrl,
+	parseFluxerApiConfig,
+} from "./apiConfig.js";
+import {
+	buildMemberSnapshot,
+	extractMemberRoleIds,
+	extractMemberUserId,
+	getMessageAvatarUrl,
+	getUserDisplayName,
+} from "./identity.js";
+import {
+	buildFluxerMessageBody,
+	buildFluxerMessageForm,
+	getEditMessageContent,
+	getUnicodeEmojiFromFluxerPayload,
+	getWebhookCredentials,
+	normalizeFluxerAttachments,
+	normalizeReplyPayload,
+} from "./messages.js";
+import {
+	FLUXER_ADMINISTRATOR_PERMISSION,
+	FLUXER_MANAGE_CHANNELS_PERMISSION,
+	FLUXER_MANAGE_ROLES_PERMISSION,
+	buildChannelPermissionOverwrites,
+	buildFluxerPermissionOverwrites,
+	hasPermission,
+	setDefined,
+} from "./permissions.js";
+const BRIDGE_WEBHOOK_NAME = "DisFlux Sync Bridge";
 
-function hasPermission(permissions, permission) {
-	return (permissions & permission) === permission;
-}
-
-function parseFluxerApiConfig(rawBase) {
-	const url = new URL(rawBase);
-	if (!ALLOWED_FLUXER_API_ORIGINS.has(url.origin)) {
-		throw new Error(`Unsupported Fluxer API origin: ${url.origin}`);
-	}
-	const segments = url.pathname.split("/").filter(Boolean);
-	let version = "1";
-	if (segments.length > 0) {
-		const lastSegment = segments[segments.length - 1];
-		if (/^v\d+$/i.test(lastSegment)) {
-			version = lastSegment.slice(1);
-			segments.pop();
-		}
-	}
-	const apiBase =
-		segments.length > 0
-			? `${url.origin}/${segments.join("/")}`
-			: url.origin;
-	return { apiBase, version };
-}
-function buildFluxerApiUrl(apiBase, apiVersion, path) {
-	if (
-		typeof path !== "string" ||
-		!path.startsWith("/") ||
-		path.startsWith("//") ||
-		path.includes("\\")
-	) {
-		throw new Error("Fluxer API path must be a relative absolute path");
-	}
-
-	const normalizedApiBase = apiBase.endsWith("/") ? apiBase : `${apiBase}/`;
-	const url = new URL(`v${apiVersion}${path}`, normalizedApiBase);
-	if (!ALLOWED_FLUXER_API_ORIGINS.has(url.origin)) {
-		throw new Error(`Unsupported Fluxer API request origin: ${url.origin}`);
-	}
-
-	return `${FLUXER_API_ORIGIN}${url.pathname}${url.search}`;
-}
-function extractMemberRoleIds(member) {
-	return member?.roles ?? member?.role_ids ?? [];
-}
-function extractMemberUserId(member) {
-	return member?.user?.id ?? member?.user_id ?? member?.id ?? null;
-}
-function getUserDisplayName(author, member = null) {
-	return (
-		member?.nick ??
-		author?.global_name ??
-		author?.username ??
-		"Unknown User"
-	);
-}
-function getUnicodeEmojiFromFluxerPayload(emoji) {
-	if (!emoji) {
-		return null;
-	}
-	if (emoji.id) {
-		return null;
-	}
-	return emoji.name ?? null;
-}
-function normalizeFluxerAttachments(attachments = []) {
-	return attachments.map((attachment) => ({
-		url: attachment.url,
-		filename: attachment.filename ?? "file",
-		contentType: attachment.content_type ?? "application/octet-stream",
-		description: attachment.description ?? null,
-		size: attachment.size ?? 0,
-	}));
-}
-function normalizeReplyPayload(payload) {
-	if (typeof payload === "string") {
-		return { content: payload };
-	}
-	return payload ?? {};
-}
-function buildMemberSnapshot(member) {
-	return {
-		userId: extractMemberUserId(member),
-		nick: member?.nick ?? null,
-		roleIds: new Set(extractMemberRoleIds(member)),
-	};
-}
-function normalizePermissionOverwriteType(type) {
-	if (type === "member" || type === 1 || type === "1") {
-		return { api: 1, normalized: "member" };
-	}
-
-	return { api: 0, normalized: "role" };
-}
-function buildChannelPermissionOverwrites(channel) {
-	return (channel.permission_overwrites ?? []).map((overwrite) => {
-		const type = normalizePermissionOverwriteType(overwrite.type);
-		return {
-			id: overwrite.id,
-			type: type.normalized,
-			allow: String(overwrite.allow ?? "0"),
-			deny: String(overwrite.deny ?? "0"),
-		};
-	});
-}
-function buildFluxerPermissionOverwrites(overwrites = []) {
-	return overwrites.map((overwrite) => ({
-		id: overwrite.id,
-		type: normalizePermissionOverwriteType(overwrite.type).api,
-		allow: String(overwrite.allow ?? "0"),
-		deny: String(overwrite.deny ?? "0"),
-	}));
-}
-function setDefined(target, key, value) {
-	if (value !== undefined) {
-		target[key] = value;
-	}
-}
 export class FluxerPlatform extends EventEmitter {
 	constructor({ token, apiBase }) {
 		super();
@@ -424,6 +331,7 @@ export class FluxerPlatform extends EventEmitter {
 			messageId: data.id,
 			content: data.content ?? "",
 			displayName: getUserDisplayName(data.author, data.member ?? null),
+			avatarUrl: getMessageAvatarUrl(data),
 			referenceMessageId: data.message_reference?.message_id ?? null,
 			mentionUserIds: (data.mentions ?? []).map((user) => user.id),
 			mentionRoleIds: data.mention_roles ?? [],
@@ -437,6 +345,7 @@ export class FluxerPlatform extends EventEmitter {
 				: 0,
 			isBotAuthor: Boolean(data.author?.bot),
 			isWebhookMessage: Boolean(data.webhook_id),
+			webhookId: data.webhook_id ?? null,
 			isSelfMessage: Boolean(
 				this.selfUserId && data.author?.id === this.selfUserId,
 			),
@@ -464,11 +373,15 @@ export class FluxerPlatform extends EventEmitter {
 		return this.selfUserId;
 	}
 	async requestResponse(path, options = {}) {
+		const { auth = true, ...fetchOptions } = options;
 		const headers = {
-			Authorization: `Bot ${this.token}`,
-			...(options.headers || {}),
+			...(auth ? { Authorization: `Bot ${this.token}` } : {}),
+			...(fetchOptions.headers || {}),
 		};
-		if (!(options.body instanceof FormData) && !headers["Content-Type"]) {
+		if (
+			!(fetchOptions.body instanceof FormData) &&
+			!headers["Content-Type"]
+		) {
 			headers["Content-Type"] = "application/json";
 		}
 		try {
@@ -478,7 +391,7 @@ export class FluxerPlatform extends EventEmitter {
 				path,
 			);
 			return await fetch(url, {
-				...options,
+				...fetchOptions,
 				redirect: "error",
 				headers,
 			});
@@ -764,45 +677,20 @@ export class FluxerPlatform extends EventEmitter {
 		});
 	}
 	async sendGuildMessage(channelId, payload) {
-		const baseBody = {
-			content: payload.content ?? "",
-			...(payload.allowedMentions
-				? { allowed_mentions: payload.allowedMentions }
-				: {}),
-			...(payload.embeds?.length ? { embeds: payload.embeds } : {}),
-		};
-		if (payload.messageReference?.messageId) {
-			baseBody.message_reference = {
-				type: 0,
-				message_id: payload.messageReference.messageId,
-				channel_id: payload.messageReference.channelId ?? channelId,
-				guild_id: payload.messageReference.guildId ?? undefined,
-			};
-		}
-		if (payload.files?.length) {
-			const form = new FormData();
-			form.append(
-				"payload_json",
-				JSON.stringify({
-					...baseBody,
-					attachments: payload.files.map((file, index) => ({
-						id: index,
-						filename: file.name,
-						...(file.description
-							? { description: file.description }
-							: {}),
-					})),
-				}),
+		if (payload.webhook?.id && payload.webhook?.token) {
+			const webhookMessage = await this.sendGuildWebhookMessage(
+				payload,
 			);
-			for (const [index, file] of payload.files.entries()) {
-				form.append(
-					`files[${index}]`,
-					new Blob([file.buffer], {
-						type: file.contentType ?? "application/octet-stream",
-					}),
-					file.name,
-				);
+			if (webhookMessage) {
+				return webhookMessage;
 			}
+		}
+
+		const baseBody = buildFluxerMessageBody(payload, {
+			useFallbackContent: true,
+		});
+		if (payload.files?.length) {
+			const form = buildFluxerMessageForm(payload, baseBody);
 			const uploaded = await this.request(
 				`/channels/${channelId}/messages`,
 				{ method: "POST", body: form },
@@ -814,6 +702,52 @@ export class FluxerPlatform extends EventEmitter {
 		return this.request(`/channels/${channelId}/messages`, {
 			method: "POST",
 			body: JSON.stringify(baseBody),
+		});
+	}
+	async sendGuildWebhookMessage(payload) {
+		const baseBody = buildFluxerMessageBody(payload, {
+			includeReference: true,
+			includeWebhookIdentity: true,
+		});
+		const sent = await this.executeGuildWebhookMessage(payload, baseBody);
+		if (sent || !payload.messageReference?.messageId) {
+			return sent;
+		}
+		const fallbackBody = buildFluxerMessageBody(payload, {
+			includeReference: false,
+			includeReferenceFallback: true,
+			includeWebhookIdentity: true,
+		});
+		const sentWithReferenceFallback =
+			await this.executeGuildWebhookMessage(payload, fallbackBody);
+		if (
+			sentWithReferenceFallback &&
+			typeof sentWithReferenceFallback === "object"
+		) {
+			return {
+				...sentWithReferenceFallback,
+				referenceFallbackUsed: true,
+			};
+		}
+		return sentWithReferenceFallback;
+	}
+	async executeGuildWebhookMessage(payload, body) {
+		const path = `/webhooks/${payload.webhook.id}/${payload.webhook.token}?wait=true`;
+		if (payload.files?.length) {
+			const form = buildFluxerMessageForm(payload, body);
+			const uploaded = await this.request(path, {
+				method: "POST",
+				body: form,
+				auth: false,
+			});
+			if (uploaded) {
+				return uploaded;
+			}
+		}
+		return this.request(path, {
+			method: "POST",
+			body: JSON.stringify(body),
+			auth: false,
 		});
 	}
 	async sendDirectMessage(userId, payload) {
@@ -831,10 +765,31 @@ export class FluxerPlatform extends EventEmitter {
 		return Boolean(message);
 	}
 	async editGuildMessage(channelId, messageId, payload) {
+		if (payload.webhook?.id && payload.webhook?.token) {
+			const edited = await this.request(
+				`/webhooks/${payload.webhook.id}/${payload.webhook.token}/messages/${messageId}`,
+				{
+					method: "PATCH",
+					auth: false,
+					body: JSON.stringify(
+						buildFluxerMessageBody(payload, {
+							includeReference: false,
+							includeReferenceFallback: Boolean(
+								payload.referenceFallbackUsed,
+							),
+						}),
+					),
+				},
+			);
+			if (edited) {
+				return edited;
+			}
+		}
+
 		return this.request(`/channels/${channelId}/messages/${messageId}`, {
 			method: "PATCH",
 			body: JSON.stringify({
-				content: payload.content,
+				content: getEditMessageContent(payload, true),
 				...(payload.allowedMentions
 					? { allowed_mentions: payload.allowedMentions }
 					: {}),
@@ -844,11 +799,33 @@ export class FluxerPlatform extends EventEmitter {
 			}),
 		});
 	}
-	async deleteGuildMessage(channelId, messageId) {
+	async deleteGuildMessage(channelId, messageId, options = {}) {
+		if (options.webhook?.id && options.webhook?.token) {
+			const deleted = await this.requestOk(
+				`/webhooks/${options.webhook.id}/${options.webhook.token}/messages/${messageId}`,
+				{ method: "DELETE", auth: false },
+				{ channelId, messageId, action: "deleteWebhookMessage" },
+			);
+			if (deleted) {
+				return true;
+			}
+		}
+
 		return this.requestOk(
 			`/channels/${channelId}/messages/${messageId}`,
 			{ method: "DELETE" },
 			{ channelId, messageId, action: "deleteGuildMessage" },
+		);
+	}
+	async deleteGuildChannelWebhook(webhookCredentials) {
+		if (!webhookCredentials?.id || !webhookCredentials?.token) {
+			return false;
+		}
+
+		return this.requestOk(
+			`/webhooks/${webhookCredentials.id}/${webhookCredentials.token}`,
+			{ method: "DELETE", auth: false },
+			{ action: "deleteGuildChannelWebhook" },
 		);
 	}
 	async addReactionToMessage(channelId, messageId, emoji) {
@@ -858,6 +835,90 @@ export class FluxerPlatform extends EventEmitter {
 			{ method: "PUT" },
 			{ channelId, messageId, emoji, action: "addReactionToMessage" },
 		);
+	}
+	async ensureGuildChannelWebhook(guildId, channelId, existing = null) {
+		const existingCredentials =
+			await this.fetchExistingGuildChannelWebhook(
+				channelId,
+				existing,
+			);
+		if (existingCredentials) {
+			return existingCredentials;
+		}
+
+		const channel = await this.fetchGuildChannel(guildId, channelId);
+		if (!channel || channel.guild_id !== guildId || channel.type !== 0) {
+			return null;
+		}
+
+		const reusableCredentials =
+			await this.fetchReusableGuildChannelWebhook(channelId);
+		if (reusableCredentials) {
+			return reusableCredentials;
+		}
+
+		const created = await this.request(
+			`/channels/${channelId}/webhooks`,
+			{
+				method: "POST",
+				body: JSON.stringify({ name: BRIDGE_WEBHOOK_NAME }),
+			},
+		);
+		return getWebhookCredentials(created);
+	}
+	async fetchReusableGuildChannelWebhook(channelId) {
+		const webhooks = await this.request(
+			`/channels/${channelId}/webhooks`,
+		);
+		if (!Array.isArray(webhooks)) {
+			return null;
+		}
+
+		const webhook = webhooks.find((candidate) => {
+			if (
+				candidate?.name !== BRIDGE_WEBHOOK_NAME ||
+				!candidate?.token
+			) {
+				return false;
+			}
+			if (
+				this.selfUserId &&
+				candidate.user?.id &&
+				candidate.user.id !== this.selfUserId
+			) {
+				return false;
+			}
+			return true;
+		});
+		return getWebhookCredentials(webhook);
+	}
+	async fetchExistingGuildChannelWebhook(channelId, existing = null) {
+		if (!existing?.id || !existing?.token) {
+			return null;
+		}
+
+		const webhookWithToken = await this.request(
+			`/webhooks/${existing.id}/${existing.token}`,
+			{ auth: false },
+		);
+		if (webhookWithToken?.channel_id === channelId) {
+			return getWebhookCredentials(webhookWithToken);
+		}
+
+		const webhooks = await this.request(
+			`/channels/${channelId}/webhooks`,
+		);
+		if (!Array.isArray(webhooks)) {
+			return null;
+		}
+
+		const webhook = webhooks.find(
+			(candidate) =>
+				candidate?.id === existing.id &&
+				candidate?.token === existing.token &&
+				candidate?.channel_id === channelId,
+		);
+		return getWebhookCredentials(webhook);
 	}
 	async removeOwnReactionFromMessage(channelId, messageId, emoji) {
 		const encodedEmoji = encodeURIComponent(emoji);

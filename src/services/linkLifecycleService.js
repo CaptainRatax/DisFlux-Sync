@@ -8,269 +8,44 @@ import {
 	sanitizeMongoObjectId,
 	sanitizePlatformId,
 } from "../utils/sanitize.js";
+import {
+	addDays,
+	isExpired,
+	isPastDate,
+	toValidDate,
+} from "./linkLifecycle/dates.js";
+import {
+	appendMissingAnnouncementChannelNote,
+	buildAllowedMentions,
+	buildChannelLinkRemovedNotice,
+	buildRoleLinkRemovedNotice,
+	buildServerLinkDisabledNotice,
+	sortGuildChannels,
+} from "./linkLifecycle/notices.js";
+import {
+	formatPlatformLabel,
+	getAnnouncementChannelIdForPlatform,
+	getChannelFieldName,
+	getChannelIdForPlatform,
+	getGuildFieldName,
+	getGuildIdForPlatform,
+	getOtherPlatform,
+	getRoleFieldName,
+	getRoleIdForPlatform,
+	getUserFieldName,
+	getWebhookCredentials,
+} from "./linkLifecycle/platformFields.js";
+import {
+	getMongoObjectId,
+	getServerLinkIdFilter,
+	isLinkEnabled,
+} from "./linkLifecycle/state.js";
+
+export { getServerLinkIdFilter, isLinkEnabled } from "./linkLifecycle/state.js";
 
 const DEFAULT_DISPOSE_AFTER_DAYS = 30;
 const DEFAULT_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const DEFAULT_DISABLE_GRACE_MS = 10 * 60 * 1000;
-
-function getOtherPlatform(platform) {
-	if (platform === "discord") {
-		return "fluxer";
-	}
-	if (platform === "fluxer") {
-		return "discord";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-
-function getGuildFieldName(platform) {
-	if (platform === "discord") {
-		return "discordGuildId";
-	}
-	if (platform === "fluxer") {
-		return "fluxerGuildId";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-
-function getChannelFieldName(platform) {
-	if (platform === "discord") {
-		return "discordChannelId";
-	}
-	if (platform === "fluxer") {
-		return "fluxerChannelId";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-
-function getAnnouncementChannelFieldName(platform) {
-	if (platform === "discord") {
-		return "discordAnnouncementChannelId";
-	}
-	if (platform === "fluxer") {
-		return "fluxerAnnouncementChannelId";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-
-function getRoleFieldName(platform) {
-	if (platform === "discord") {
-		return "discordRoleId";
-	}
-	if (platform === "fluxer") {
-		return "fluxerRoleId";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-
-function getUserFieldName(platform) {
-	if (platform === "discord") {
-		return "discordUserId";
-	}
-	if (platform === "fluxer") {
-		return "fluxerUserId";
-	}
-	throw new Error(`Unsupported platform: ${platform}`);
-}
-
-function getGuildIdForPlatform(serverLink, platform) {
-	return serverLink?.[getGuildFieldName(platform)] ?? null;
-}
-
-function getChannelIdForPlatform(channelLink, platform) {
-	return channelLink?.[getChannelFieldName(platform)] ?? null;
-}
-
-function getAnnouncementChannelIdForPlatform(serverLink, platform) {
-	return serverLink?.[getAnnouncementChannelFieldName(platform)] ?? null;
-}
-
-function getRoleIdForPlatform(roleLink, platform) {
-	return roleLink?.[getRoleFieldName(platform)] ?? null;
-}
-
-function formatPlatformLabel(platform) {
-	if (platform === "discord") {
-		return "Discord";
-	}
-	if (platform === "fluxer") {
-		return "Fluxer";
-	}
-	return "Unknown";
-}
-
-function toValidDate(value) {
-	if (!value) {
-		return null;
-	}
-
-	const date = value instanceof Date ? value : new Date(value);
-	if (Number.isNaN(date.getTime())) {
-		return null;
-	}
-
-	return date;
-}
-
-function addDays(date, days) {
-	return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
-}
-
-function isExpired(date, now, days) {
-	const parsed = toValidDate(date);
-	return Boolean(parsed && parsed.getTime() <= now.getTime() - days * 24 * 60 * 60 * 1000);
-}
-
-function isPastDate(date, now) {
-	const parsed = toValidDate(date);
-	return Boolean(parsed && parsed.getTime() <= now.getTime());
-}
-
-function formatMarkdownTimestamp(value, style) {
-	const date = toValidDate(value);
-	if (!date) {
-		return null;
-	}
-	return `<t:${Math.floor(date.getTime() / 1000)}:${style}>`;
-}
-
-function getMongoObjectId(value) {
-	if (value && typeof value === "object" && "_id" in value) {
-		return sanitizeMongoObjectId(value._id);
-	}
-	return sanitizeMongoObjectId(value);
-}
-
-function getServerLinkIdValues(serverLinkId) {
-	const values = [];
-	const objectId = sanitizeMongoObjectId(serverLinkId);
-
-	function addValue(value) {
-		if (value === null || value === undefined) {
-			return;
-		}
-		if (
-			values.some(
-				(existing) =>
-					typeof existing === typeof value &&
-					String(existing) === String(value),
-			)
-		) {
-			return;
-		}
-		values.push(value);
-	}
-
-	addValue(objectId);
-
-	if (serverLinkId !== null && serverLinkId !== undefined) {
-		addValue(serverLinkId);
-		addValue(String(serverLinkId));
-	}
-
-	return values;
-}
-
-export function getServerLinkIdFilter(serverLinkId) {
-	const values = getServerLinkIdValues(serverLinkId);
-	if (values.length === 0) {
-		return null;
-	}
-	if (values.length === 1) {
-		return values[0];
-	}
-	return { $in: values };
-}
-
-export function isLinkEnabled(link) {
-	return Boolean(link && !link.disabledAt && link.enabled !== false);
-}
-
-function buildAllowedMentions(platform) {
-	if (platform === "discord") {
-		return {
-			parse: [],
-			users: [],
-			roles: [],
-			repliedUser: false,
-		};
-	}
-
-	return {
-		parse: [],
-		users: [],
-		roles: [],
-		replied_user: false,
-	};
-}
-
-function buildChannelLinkRemovedNotice({
-	deletedPlatform,
-	deletedChannelId,
-	removedMessageLinks,
-}) {
-	return [
-		"Channel link removed.",
-		`Reason: the linked ${formatPlatformLabel(deletedPlatform)} channel \`${deletedChannelId}\` was deleted.`,
-		`Cached message mappings removed: \`${removedMessageLinks ?? 0}\``,
-	].join("\n");
-}
-
-function buildRoleLinkRemovedNotice({ deletedPlatform, deletedRoleId }) {
-	return [
-		"Role link removed.",
-		`Reason: the linked ${formatPlatformLabel(deletedPlatform)} role \`${deletedRoleId}\` was deleted.`,
-	].join("\n");
-}
-
-function buildServerLinkDisabledNotice({
-	missingPlatform,
-	disposeAfter,
-	disposeAfterDays,
-	reason = "bot_removed",
-}) {
-	const exactDeadline = formatMarkdownTimestamp(disposeAfter, "F");
-	const relativeDeadline = formatMarkdownTimestamp(disposeAfter, "R");
-	const deadlineLine =
-		exactDeadline && relativeDeadline
-		? `Delete deadline: ${exactDeadline} (${relativeDeadline}).`
-		: `Delete deadline: ${disposeAfterDays} days after the server link was disabled.`;
-	const reasonLine =
-		reason === "bot_removed"
-			? `the bot was removed from the linked ${formatPlatformLabel(missingPlatform)} server.`
-			: `the bot could not confirm access to the linked ${formatPlatformLabel(missingPlatform)} server after repeated checks.`;
-
-	return [
-		"Server link disabled.",
-		`Reason: ${reasonLine}`,
-		"All syncs for this server pair are now paused.",
-		`If the bot is not back in both servers before the deadline, all saved link data for this server pair will be deleted.`,
-		deadlineLine,
-	].join("\n");
-}
-
-function appendMissingAnnouncementChannelNote(content, serverLink, platform) {
-	const prefix =
-		typeof serverLink?.prefix === "string" && serverLink.prefix.length > 0
-			? serverLink.prefix
-			: ".";
-	return [
-		content,
-		"",
-		`Note: no announcement channel is configured for the ${formatPlatformLabel(platform)} side of this server link.`,
-		`Use \`${prefix}set-announcement-channel\` in the desired channel or \`${prefix}set-announcement-channel ${platform} <channel-id>\` to configure one.`,
-	].join("\n");
-}
-
-function sortGuildChannels(channels) {
-	return [...channels].sort((left, right) => {
-		const leftPosition =
-			left.rawPosition ?? left.position ?? left.position_overwrite ?? 0;
-		const rightPosition =
-			right.rawPosition ?? right.position ?? right.position_overwrite ?? 0;
-		return leftPosition - rightPosition;
-	});
-}
 
 export class LinkLifecycleService {
 	constructor({
@@ -1234,6 +1009,7 @@ export class LinkLifecycleService {
 				deletedRoleLinks: 0,
 				deletedUserLinks: 0,
 				deletedMessageLinks: 0,
+				deletedManagedWebhooks: 0,
 				deletedPendingUserLinks: 0,
 				deletedPendingServerUnlinks: 0,
 				deletedPendingSetups: 0,
@@ -1257,6 +1033,14 @@ export class LinkLifecycleService {
 				},
 			);
 		}
+
+		const channelLinksForCleanup = await this.channelLinks
+			.find({ serverLinkId: serverLinkIdFilter })
+			.toArray();
+		const deletedManagedWebhooks =
+			await this.deleteManagedChannelWebhooksForLinks(
+				channelLinksForCleanup,
+			);
 
 		const [
 			messageResult,
@@ -1290,6 +1074,7 @@ export class LinkLifecycleService {
 			deletedRoleLinks: roleResult.deletedCount ?? 0,
 			deletedUserLinks: userResult.deletedCount ?? 0,
 			deletedMessageLinks: messageResult.deletedCount ?? 0,
+			deletedManagedWebhooks,
 			deletedPendingUserLinks: pendingUserResult.deletedCount ?? 0,
 			deletedPendingServerUnlinks:
 				pendingServerUnlinkResult.deletedCount ?? 0,
@@ -1307,11 +1092,54 @@ export class LinkLifecycleService {
 		return result;
 	}
 
+	async deleteManagedChannelWebhooksForLinks(channelLinks) {
+		let deleted = 0;
+		for (const channelLink of channelLinks ?? []) {
+			deleted += await this.deleteManagedChannelWebhooks(channelLink);
+		}
+		return deleted;
+	}
+
+	async deleteManagedChannelWebhooks(channelLink) {
+		const results = await Promise.all(
+			["discord", "fluxer"].map(async (platform) => {
+				const webhook = getWebhookCredentials(channelLink, platform);
+				const client = this.platforms[platform];
+				if (
+					!webhook ||
+					typeof client?.deleteGuildChannelWebhook !== "function"
+				) {
+					return false;
+				}
+
+				try {
+					return await client.deleteGuildChannelWebhook(webhook);
+				} catch (error) {
+					logger.warn("Failed to delete managed bridge webhook", {
+						platform,
+						webhookId: webhook.id,
+						channelLinkId: String(channelLink?._id ?? ""),
+						error: error.message,
+					});
+					return false;
+				}
+			}),
+		);
+		return results.filter(Boolean).length;
+	}
+
 	async deleteChannelLinkData(serverLink, channelLink, options = {}) {
 		const channelLinkId = getMongoObjectId(channelLink);
 		if (!channelLinkId) {
-			return { deletedChannelLinks: 0, deletedMessageLinks: 0 };
+			return {
+				deletedChannelLinks: 0,
+				deletedMessageLinks: 0,
+				deletedManagedWebhooks: 0,
+			};
 		}
+
+		const deletedManagedWebhooks =
+			await this.deleteManagedChannelWebhooks(channelLink);
 
 		const serverLinkIdFilter = getServerLinkIdFilter(
 			serverLink?._id ?? channelLink.serverLinkId,
@@ -1338,6 +1166,7 @@ export class LinkLifecycleService {
 		const result = {
 			deletedChannelLinks: channelResult.deletedCount ?? 0,
 			deletedMessageLinks: messageResult.deletedCount ?? 0,
+			deletedManagedWebhooks,
 		};
 
 		logger.info("Channel link data deleted", {
