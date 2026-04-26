@@ -8,9 +8,11 @@ import { logger } from "../core/logger.js";
 import { createHealthRouter } from "./routes/health.js";
 
 export class HttpServer {
-	constructor({ port, mongo }) {
+	constructor({ port, mongo, discord, fluxer }) {
 		this.port = port;
 		this.mongo = mongo;
+		this.discord = discord;
+		this.fluxer = fluxer;
 		this.app = express();
 		this.server = null;
 
@@ -23,7 +25,13 @@ export class HttpServer {
 	}
 
 	configureRoutes() {
-		this.app.use(createHealthRouter({ mongo: this.mongo }));
+		this.app.use(
+			createHealthRouter({
+				mongo: this.mongo,
+				discord: this.discord,
+				fluxer: this.fluxer,
+			}),
+		);
 	}
 
 	async start() {

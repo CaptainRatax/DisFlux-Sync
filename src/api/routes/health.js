@@ -5,20 +5,109 @@
 
 import { Router } from "express";
 
-export function createHealthRouter({ mongo }) {
+function serializeServiceHealth(serviceHealth) {
+	const payload = {
+		status: serviceHealth.status,
+	};
+
+	if (typeof serviceHealth.ready === "boolean") {
+		payload.ready = serviceHealth.ready;
+	}
+
+	if (typeof serviceHealth.connected === "boolean") {
+		payload.connected = serviceHealth.connected;
+	}
+
+	if (serviceHealth.lastError) {
+		payload.lastError = serviceHealth.lastError;
+	}
+
+	return payload;
+}
+
+function computeAggregateStatus(services) {
+	const statuses = Object.values(services).map((service) => service.status);
+
+	if (statuses.every((status) => status === "up")) {
+		return "ok";
+	}
+
+	if (statuses.includes("down")) {
+		return "degraded";
+	}
+
+	if (statuses.includes("starting")) {
+		return "starting";
+	}
+
+	return "degraded";
+}
+
+function mapSingleServiceStatus(service) {
+	if (service.status === "up") {
+		return "ok";
+	}
+
+	if (service.status === "starting") {
+		return "starting";
+	}
+
+	return "down";
+}
+
+export function createHealthRouter({ mongo, discord, fluxer }) {
 	const router = Router();
 
-	router.get("/health", async (_req, res) => {
-		const mongoOk = await mongo.ping();
+	async function getSnapshot() {
+		const [mongoHealth, discordHealth, fluxerHealth] = await Promise.all([
+			mongo.getHealthStatus(),
+			Promise.resolve(discord.getHealthStatus()),
+			Promise.resolve(fluxer.getHealthStatus()),
+		]);
 
-		const status = mongoOk ? "ok" : "degraded";
+		const services = {
+			discord: serializeServiceHealth(discordHealth),
+			fluxer: serializeServiceHealth(fluxerHealth),
+			database: serializeServiceHealth(mongoHealth),
+		};
 
-		res.status(mongoOk ? 200 : 503).json({
-			status,
+		return {
+			status: computeAggregateStatus(services),
 			timestamp: new Date().toISOString(),
-			services: {
-				mongo: mongoOk ? "up" : "down",
-			},
+			services,
+		};
+	}
+
+	router.get("/health", async (_req, res) => {
+		const snapshot = await getSnapshot();
+
+		res.status(200).json(snapshot);
+	});
+
+	router.get("/health/bot", async (_req, res) => {
+		const snapshot = await getSnapshot();
+		const services = {
+			discord: snapshot.services.discord,
+			fluxer: snapshot.services.fluxer,
+		};
+		const status = computeAggregateStatus(services);
+
+		res.status(status === "ok" ? 200 : 503).json({
+			status,
+			timestamp: snapshot.timestamp,
+			services,
+		});
+	});
+
+	router.get("/health/db", async (_req, res) => {
+		const snapshot = await getSnapshot();
+		const database = snapshot.services.database;
+		const status = mapSingleServiceStatus(database);
+
+		res.status(status === "ok" ? 200 : 503).json({
+			status,
+			timestamp: snapshot.timestamp,
+			service: database,
 		});
 	});
 

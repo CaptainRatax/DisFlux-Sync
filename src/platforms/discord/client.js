@@ -49,6 +49,9 @@ export class DiscordPlatform extends EventEmitter {
 		super();
 		this.token = token;
 		this.clientId = clientId;
+		this.healthState = "down";
+		this.lastError = null;
+		this.coreEventsRegistered = false;
 		this.client = new Client({
 			intents: [
 				GatewayIntentBits.Guilds,
@@ -61,9 +64,18 @@ export class DiscordPlatform extends EventEmitter {
 		});
 	}
 	async start() {
+		this.healthState = "starting";
+		this.lastError = null;
 		this.registerCoreEvents();
-		await this.registerSlashCommands();
-		await this.client.login(this.token);
+
+		try {
+			await this.registerSlashCommands();
+			await this.client.login(this.token);
+		} catch (error) {
+			this.healthState = "down";
+			this.lastError = error.message;
+			throw error;
+		}
 	}
 	async registerSlashCommands() {
 		const commands = buildDiscordSlashCommands();
@@ -83,7 +95,15 @@ export class DiscordPlatform extends EventEmitter {
 		}
 	}
 	registerCoreEvents() {
+		if (this.coreEventsRegistered) {
+			return;
+		}
+
+		this.coreEventsRegistered = true;
+
 		this.client.once(Events.ClientReady, (client) => {
+			this.healthState = "up";
+			this.lastError = null;
 			logger.info("Discord client ready", {
 				userId: client.user.id,
 				tag: client.user.tag,
@@ -331,7 +351,19 @@ export class DiscordPlatform extends EventEmitter {
 			},
 		);
 		this.client.on(Events.Error, (error) => {
+			if (!this.client.isReady()) {
+				this.healthState = "down";
+			}
+			this.lastError = error.message;
 			logger.error("Discord client error", { error: error.message });
+		});
+		this.client.on(Events.ShardDisconnect, (_event, shardId) => {
+			this.healthState = "down";
+			this.lastError = `Shard ${shardId} disconnected`;
+		});
+		this.client.on(Events.Invalidated, () => {
+			this.healthState = "down";
+			this.lastError = "Discord session invalidated";
 		});
 	}
 	buildSlashCommandEventPayload(interaction) {
@@ -1086,6 +1118,17 @@ export class DiscordPlatform extends EventEmitter {
 	}
 	stop() {
 		this.client.destroy();
+		this.healthState = "down";
 		logger.info("Discord client stopped");
+	}
+
+	getHealthStatus() {
+		const ready = this.client.isReady();
+
+		return {
+			status: ready ? "up" : this.healthState,
+			ready,
+			lastError: ready ? null : this.lastError,
+		};
 	}
 }
