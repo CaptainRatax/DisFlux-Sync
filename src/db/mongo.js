@@ -14,21 +14,41 @@ export class MongoService {
 		this.client = null;
 		this.db = null;
 		this.connected = false;
+		this.healthState = "down";
+		this.lastError = null;
 	}
 
 	async connect() {
+		this.healthState = "starting";
+		this.lastError = null;
 		this.client = new MongoClient(this.uri);
-		await this.client.connect();
 
-		this.db = this.client.db(this.dbName);
+		try {
+			await this.client.connect();
 
-		await this.createIndexes();
+			this.db = this.client.db(this.dbName);
 
-		this.connected = true;
+			await this.createIndexes();
 
-		logger.info("Connected to MongoDB", {
-			dbName: this.dbName,
-		});
+			this.connected = true;
+			this.healthState = "up";
+
+			logger.info("Connected to MongoDB", {
+				dbName: this.dbName,
+			});
+		} catch (error) {
+			this.connected = false;
+			this.healthState = "down";
+			this.lastError = error.message;
+
+			if (this.client) {
+				await this.client.close().catch(() => {});
+			}
+
+			this.client = null;
+			this.db = null;
+			throw error;
+		}
 	}
 
 	async createIndexes() {
@@ -339,6 +359,16 @@ export class MongoService {
 		}
 	}
 
+	async getHealthStatus() {
+		const reachable = await this.ping();
+
+		return {
+			status: reachable ? "up" : this.healthState,
+			connected: reachable,
+			lastError: reachable ? null : this.lastError,
+		};
+	}
+
 	async close() {
 		if (this.client) {
 			await this.client.close();
@@ -346,6 +376,7 @@ export class MongoService {
 		}
 
 		this.connected = false;
+		this.healthState = "down";
 		this.client = null;
 		this.db = null;
 	}

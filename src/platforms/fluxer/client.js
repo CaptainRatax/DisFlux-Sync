@@ -6,7 +6,7 @@
 import { EventEmitter } from "node:events";
 import { Client, GatewayDispatchEvents } from "@discordjs/core";
 import { REST } from "@discordjs/rest";
-import { WebSocketManager } from "@discordjs/ws";
+import { WebSocketManager, WebSocketShardEvents } from "@discordjs/ws";
 import { logger } from "../../core/logger.js";
 import {
 	buildFluxerApiUrl,
@@ -44,6 +44,9 @@ export class FluxerPlatform extends EventEmitter {
 		super();
 		this.token = token;
 		this.selfUserId = null;
+		this.healthState = "down";
+		this.lastError = null;
+		this.coreEventsRegistered = false;
 		const parsed = parseFluxerApiConfig(apiBase);
 		this.apiBase = parsed.apiBase;
 		this.apiVersion = parsed.version;
@@ -60,12 +63,29 @@ export class FluxerPlatform extends EventEmitter {
 		this.client = new Client({ rest: this.rest, gateway: this.gateway });
 	}
 	async start() {
+		this.healthState = "starting";
+		this.lastError = null;
 		this.registerCoreEvents();
-		this.gateway.connect();
+
+		try {
+			await this.gateway.connect();
+		} catch (error) {
+			this.healthState = "down";
+			this.lastError = error.message;
+			throw error;
+		}
 	}
 	registerCoreEvents() {
+		if (this.coreEventsRegistered) {
+			return;
+		}
+
+		this.coreEventsRegistered = true;
+
 		this.client.on(GatewayDispatchEvents.Ready, ({ data }) => {
 			this.selfUserId = data.user.id;
+			this.healthState = "up";
+			this.lastError = null;
 			logger.info("Fluxer client ready", {
 				userId: data.user.id,
 				username: data.user.username,
@@ -316,6 +336,21 @@ export class FluxerPlatform extends EventEmitter {
 				});
 			},
 		);
+		this.gateway.on(WebSocketShardEvents.Ready, () => {
+			this.healthState = "up";
+			this.lastError = null;
+		});
+		this.gateway.on(WebSocketShardEvents.Resumed, () => {
+			this.healthState = "up";
+			this.lastError = null;
+		});
+		this.gateway.on(WebSocketShardEvents.Closed, (event) => {
+			this.selfUserId = null;
+			this.healthState = "down";
+			this.lastError = event?.code
+				? `Gateway closed with code ${event.code}`
+				: "Gateway closed";
+		});
 	}
 	buildMessageEventPayload(data) {
 		const userMentionLabels = {};
@@ -1082,6 +1117,18 @@ export class FluxerPlatform extends EventEmitter {
 		if (typeof this.gateway.destroy === "function") {
 			this.gateway.destroy();
 		}
+		this.selfUserId = null;
+		this.healthState = "down";
 		logger.info("Fluxer client stopped");
+	}
+
+	getHealthStatus() {
+		const ready = Boolean(this.selfUserId);
+
+		return {
+			status: ready ? "up" : this.healthState,
+			ready,
+			lastError: ready ? null : this.lastError,
+		};
 	}
 }

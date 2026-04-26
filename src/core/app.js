@@ -41,6 +41,8 @@ export class App {
 		this.httpServer = new HttpServer({
 			port: env.httpPort,
 			mongo: this.mongo,
+			discord: this.discord,
+			fluxer: this.fluxer,
 		});
 
 		this.setupService = null;
@@ -50,12 +52,76 @@ export class App {
 		this.linkLifecycleService = null;
 		this.infoService = null;
 		this.prefixService = null;
+		this.servicesInitialized = false;
+		this.commandDispatchersBound = false;
 	}
 
 	async start() {
 		logger.info("Starting application");
 
-		await this.mongo.connect();
+		await this.httpServer.start();
+
+		const dataLayerReady = await this.initializeDataLayer();
+		if (!dataLayerReady) {
+			logger.warn(
+				"Application started in API-only mode because MongoDB is unavailable",
+			);
+			return;
+		}
+
+		const [discordStarted, fluxerStarted] = await Promise.all([
+			this.startPlatform("discord", this.discord),
+			this.startPlatform("fluxer", this.fluxer),
+		]);
+
+		if (!discordStarted || !fluxerStarted) {
+			logger.warn(
+				"Application started with API available, but bot services are degraded",
+				{
+					discordStarted,
+					fluxerStarted,
+				},
+			);
+			return;
+		}
+
+		try {
+			await this.linkLifecycleService.start();
+			await this.linkLifecycleService.reconcileAll();
+			await this.syncService.start();
+			await this.messageBridgeService.start();
+		} catch (error) {
+			logger.error("Failed to start bot runtime services", {
+				error: error.message,
+				stack: error.stack,
+			});
+			return;
+		}
+
+		logger.info("Application started successfully");
+	}
+
+	async initializeDataLayer() {
+		try {
+			await this.mongo.connect();
+			this.initializeServices();
+			this.bindCommandDispatchers();
+			return true;
+		} catch (error) {
+			logger.error("Failed to initialize MongoDB-backed services", {
+				error: error.message,
+				stack: error.stack,
+			});
+
+			await Promise.allSettled([this.mongo.close()]);
+			return false;
+		}
+	}
+
+	initializeServices() {
+		if (this.servicesInitialized) {
+			return;
+		}
 
 		this.setupService = new SetupService({
 			mongo: this.mongo,
@@ -107,6 +173,14 @@ export class App {
 			defaultPrefix: env.botPrefix,
 		});
 
+		this.servicesInitialized = true;
+	}
+
+	bindCommandDispatchers() {
+		if (this.commandDispatchersBound) {
+			return;
+		}
+
 		bindCommandDispatcher({
 			platformClient: this.discord,
 			setupService: this.setupService,
@@ -123,15 +197,20 @@ export class App {
 			prefixService: this.prefixService,
 		});
 
-		await this.linkLifecycleService.start();
-		await this.httpServer.start();
-		await this.discord.start();
-		await this.fluxer.start();
-		await this.linkLifecycleService.reconcileAll();
-		await this.syncService.start();
-		await this.messageBridgeService.start();
+		this.commandDispatchersBound = true;
+	}
 
-		logger.info("Application started successfully");
+	async startPlatform(name, platform) {
+		try {
+			await platform.start();
+			return true;
+		} catch (error) {
+			logger.error(`Failed to start ${name} platform`, {
+				error: error.message,
+				stack: error.stack,
+			});
+			return false;
+		}
 	}
 
 	async stop() {
